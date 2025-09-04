@@ -1,0 +1,49 @@
+# FastAPI and ASGI server
+fastapi
+uvicorn[standard]
+
+# Database
+sqlalchemy
+alembic
+asyncpg
+aiosqlite
+
+# Authentication and Security
+python-jose[cryptography]
+passlib[bcrypt]
+python-multipart
+
+# Configuration and Environment
+pydantic
+pydantic-settings
+python-decouple
+
+# HTTP client for external API calls
+httpx
+
+# Logging
+structlog
+
+# Development and Testing
+pytest
+pytest-asyncio
+factory-boy
+
+# Production
+gunicorn
+
+# Monitoring and Health Checks
+prometheus-client
+
+# Rate Limiting
+slowapi
+redis
+
+# Validation and Serialization extras
+email-validator
+
+# Background Tasks
+celery[redis]
+
+# File handling
+aiofiles
