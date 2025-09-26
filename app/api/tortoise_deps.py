@@ -1,40 +1,26 @@
-from typing import AsyncGenerator, Optional
+from typing import Optional
 
 from fastapi import Depends, HTTPException, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from jose import jwt
 from pydantic import ValidationError
-from sqlalchemy.ext.asyncio import AsyncSession
 
-from app import crud, models, schemas
-from app.core import security
 from app.core.config import settings
-from app.db.session import AsyncSessionLocal
+from app.models.models import User
+from app.schemas.user import TokenData
 
 reusable_oauth2 = HTTPBearer()
 
 
-async def get_db() -> AsyncGenerator[AsyncSession, None]:
-    async with AsyncSessionLocal() as session:
-        try:
-            yield session
-        except Exception:
-            await session.rollback()
-            raise
-        finally:
-            await session.close()
-
-
 async def get_current_user(
-    db: AsyncSession = Depends(get_db),
     token: HTTPAuthorizationCredentials = Depends(reusable_oauth2)
-) -> models.User:
+) -> User:
     credentials_exception = HTTPException(
         status_code=status.HTTP_401_UNAUTHORIZED,
         detail="Could not validate credentials",
         headers={"WWW-Authenticate": "Bearer"},
     )
-    
+
     try:
         payload = jwt.decode(
             token.credentials,
@@ -46,42 +32,42 @@ async def get_current_user(
         user_id: str = payload.get("sub")
         if user_id is None:
             raise credentials_exception
-        token_data = schemas.TokenData(user_id=int(user_id))
+        token_data = TokenData(user_id=int(user_id))
     except (jwt.JWTError, ValidationError, ValueError):
         raise credentials_exception
-        
-    user = await crud.user.get(db, id=token_data.user_id)
+
+    user = await User.get_or_none(id=token_data.user_id)
     if user is None:
         raise credentials_exception
     return user
 
 
 async def get_current_active_user(
-    current_user: models.User = Depends(get_current_user),
-) -> models.User:
-    if not await crud.user.is_active(current_user):
+    current_user: User = Depends(get_current_user),
+) -> User:
+    if not current_user.is_active:
         raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST, 
+            status_code=status.HTTP_400_BAD_REQUEST,
             detail="Inactive user"
         )
     return current_user
 
 
 async def get_current_verified_user(
-    current_user: models.User = Depends(get_current_active_user),
-) -> models.User:
-    if not await crud.user.is_verified(current_user):
+    current_user: User = Depends(get_current_active_user),
+) -> User:
+    if not current_user.is_verified:
         raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST, 
+            status_code=status.HTTP_400_BAD_REQUEST,
             detail="User email not verified"
         )
     return current_user
 
 
 async def get_current_superuser(
-    current_user: models.User = Depends(get_current_user),
-) -> models.User:
-    if not await crud.user.is_superuser(current_user):
+    current_user: User = Depends(get_current_user),
+) -> User:
+    if not current_user.is_superuser:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="The user doesn't have enough privileges"
@@ -90,12 +76,11 @@ async def get_current_superuser(
 
 
 async def get_optional_current_user(
-    db: AsyncSession = Depends(get_db),
     token: Optional[HTTPAuthorizationCredentials] = Depends(HTTPBearer(auto_error=False))
-) -> Optional[models.User]:
+) -> Optional[User]:
     if not token:
         return None
-    
+
     try:
         payload = jwt.decode(
             token.credentials,
@@ -107,11 +92,11 @@ async def get_optional_current_user(
         user_id: str = payload.get("sub")
         if user_id is None:
             return None
-        
-        user = await crud.user.get(db, id=int(user_id))
-        if user and await crud.user.is_active(user):
+
+        user = await User.get_or_none(id=int(user_id))
+        if user and user.is_active:
             return user
     except (jwt.JWTError, ValidationError, ValueError):
         pass
-    
+
     return None

@@ -1,8 +1,7 @@
 from typing import Dict, Any
 from fastapi import APIRouter, Query, Depends, HTTPException
-from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.api import deps
+# No dependencies needed for location search
 from app.services.travclan_api_service import travclan_api_service
 
 router = APIRouter()
@@ -11,7 +10,6 @@ router = APIRouter()
 @router.get("/search")
 async def search_locations(
     search_keyword: str = Query(..., min_length=2, description="Search keyword for locations"),
-    db: AsyncSession = Depends(deps.get_db)
 ) -> Dict[str, Any]:
     """
     Search for hotel locations and destinations

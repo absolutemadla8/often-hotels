@@ -4,6 +4,9 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
+# Removed broken FastAPI Admin
+from tortoise.contrib.fastapi import register_tortoise
+from tortoise import Tortoise
 
 from app.api.v1.api import api_router
 from app.core.config import settings
@@ -15,6 +18,7 @@ from app.core.security_middleware import (
     TrustedHostMiddleware,
 )
 from app.schemas.response import HealthResponse
+# Removed broken admin imports
 
 
 @asynccontextmanager
@@ -22,17 +26,53 @@ async def lifespan(app: FastAPI):
     """
     Application lifespan events
     """
-    # Startup
-    setup_logging()
-    
+    # Startup (temporarily disable complex logging)
+    # setup_logging()
+
+    # Initialize Tortoise ORM
+    # Handle different database URL formats
+    db_url = settings.DATABASE_URL
+
+    if db_url and db_url.startswith('postgresql://'):
+        # Convert PostgreSQL URL format for Tortoise ORM
+        db_url = db_url.replace('postgresql://', 'postgres://', 1)
+        # Handle SSL mode parameter for Tortoise ORM
+        if 'sslmode=require' in db_url:
+            db_url = db_url.replace('?sslmode=require', '').replace('&sslmode=require', '')
+    elif not db_url:
+        # Default to SQLite if no URL is provided
+        import os
+        db_path = os.path.abspath('often_hotels.db')
+        db_url = f'sqlite:///{db_path}'
+
+    TORTOISE_ORM = {
+        "connections": {"default": db_url},
+        "apps": {
+            "models": {
+                "models": ["app.models.models", "aerich.models"],
+                "default_connection": "default",
+            },
+        },
+    }
+
+    await Tortoise.init(config=TORTOISE_ORM)
+    register_tortoise(
+        app,
+        config=TORTOISE_ORM,
+        generate_schemas=True,
+        add_exception_handlers=True,
+    )
+
+    # Admin functionality disabled - use /docs for API testing
+
     # Database initialization would go here
     # await init_db()
-    
+
     # Clean up expired refresh tokens
     # asyncio.create_task(cleanup_expired_tokens())
-    
+
     yield
-    
+
     # Shutdown
     # Close database connections, etc.
     pass
@@ -66,9 +106,9 @@ def create_application() -> FastAPI:
     app.add_middleware(SecurityHeadersMiddleware)
     app.add_middleware(TrustedHostMiddleware, allowed_hosts=["localhost", "127.0.0.1", "0.0.0.0"])
     
-    # Logging middleware
-    app.add_middleware(RequestLoggingMiddleware)
-    app.add_middleware(LoggingMiddleware)
+    # Logging middleware (temporarily disabled due to config issues)
+    # app.add_middleware(RequestLoggingMiddleware)
+    # app.add_middleware(LoggingMiddleware)
     
     # Rate limiting (for production, use Redis-based rate limiting)
     # app.add_middleware(
@@ -83,8 +123,19 @@ def create_application() -> FastAPI:
     # Include API routes
     app.include_router(api_router, prefix=settings.API_V1_STR)
 
-    return app
+    # Add simple admin info route
+    @app.get("/admin", include_in_schema=False)
+    async def admin_info():
+        return {
+            "message": "Admin panel temporarily disabled",
+            "alternatives": {
+                "api_docs": "/docs",
+                "redoc": "/redoc",
+                "api_endpoints": "/api/v1/"
+            }
+        }
 
+    return app
 
 # Create the app instance
 app = create_application()

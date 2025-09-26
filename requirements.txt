@@ -3,8 +3,6 @@ fastapi
 uvicorn[standard]
 
 # Database
-sqlalchemy
-alembic
 asyncpg
 aiosqlite
 
@@ -47,3 +45,7 @@ celery[redis]
 
 # File handling
 aiofiles
+
+# Admin Panel
+fastapi-admin
+tortoise-orm[asyncpg]

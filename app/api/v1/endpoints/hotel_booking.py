@@ -2,10 +2,9 @@ from typing import Dict, Any, List, Optional
 from datetime import date
 from fastapi import APIRouter, Depends, HTTPException, Path
 from pydantic import BaseModel, Field, field_validator
-from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.api import deps
-from app.models.user import User
+from app.api.tortoise_deps import get_current_verified_user
+from app.models.models import User
 from app.services.travclan_api_service import travclan_api_service
 
 router = APIRouter()
@@ -77,8 +76,7 @@ class BookingRequest(BaseModel):
 @router.post("/create-direct-itinerary")
 async def create_direct_hotel_itinerary(
     request: DirectItineraryRequest,
-    current_user: User = Depends(deps.get_current_active_user),
-    db: AsyncSession = Depends(deps.get_db)
+    current_user: User = Depends(get_current_verified_user),
 ) -> Dict[str, Any]:
     """
     Get room rates directly using hotel external ID
@@ -99,7 +97,7 @@ async def create_direct_hotel_itinerary(
         # Process room data for potential room name matching and storage
         try:
             from app.services.hotel_service import HotelService
-            hotel_service = HotelService(db)
+            hotel_service = HotelService()
             
             # Extract room data from response for fuzzy matching with existing rooms
             rooms_data = response.get('results', [{}])[0].get('items', [])
@@ -136,8 +134,7 @@ async def create_direct_hotel_itinerary(
 @router.post("/create-itinerary")
 async def create_hotel_itinerary(
     request: ItineraryRequest,
-    current_user: User = Depends(deps.get_current_active_user),
-    db: AsyncSession = Depends(deps.get_db)
+    current_user: User = Depends(get_current_verified_user),
 ) -> Dict[str, Any]:
     """
     Create hotel itinerary from search results
@@ -164,8 +161,7 @@ async def create_hotel_itinerary(
 async def select_room_rates(
     itinerary_id: str = Path(..., description="Itinerary ID"),
     request: RoomRateSelectionRequest = ...,
-    current_user: User = Depends(deps.get_current_active_user),
-    db: AsyncSession = Depends(deps.get_db)
+    current_user: User = Depends(get_current_verified_user),
 ) -> Dict[str, Any]:
     """
     Select room rates for an itinerary
@@ -202,8 +198,7 @@ async def select_room_rates(
 async def allocate_guests_to_rooms(
     itinerary_code: str = Path(..., description="Itinerary code"),
     request: GuestAllocationRequest = ...,
-    current_user: User = Depends(deps.get_current_active_user),
-    db: AsyncSession = Depends(deps.get_db)
+    current_user: User = Depends(get_current_verified_user),
 ) -> Dict[str, Any]:
     """
     Allocate guests to rooms for an itinerary
@@ -230,8 +225,7 @@ async def allocate_guests_to_rooms(
 async def get_itinerary_details(
     itinerary_code: str = Path(..., description="Itinerary code"),
     traceId: Optional[str] = None,
-    current_user: User = Depends(deps.get_current_active_user),
-    db: AsyncSession = Depends(deps.get_db)
+    current_user: User = Depends(get_current_verified_user),
 ) -> Dict[str, Any]:
     """
     Get detailed information about an itinerary
@@ -259,8 +253,7 @@ async def get_itinerary_details(
 async def check_itinerary_price(
     itinerary_code: str = Path(..., description="Itinerary code"),
     traceId: Optional[str] = None,
-    current_user: User = Depends(deps.get_current_active_user),
-    db: AsyncSession = Depends(deps.get_db)
+    current_user: User = Depends(get_current_verified_user),
 ) -> Dict[str, Any]:
     """
     Check current price for an itinerary
@@ -284,8 +277,7 @@ async def check_itinerary_price(
 async def book_itinerary(
     itinerary_code: str = Path(..., description="Itinerary code"),
     request: BookingRequest = ...,
-    current_user: User = Depends(deps.get_current_active_user),
-    db: AsyncSession = Depends(deps.get_db)
+    current_user: User = Depends(get_current_verified_user),
 ) -> Dict[str, Any]:
     """
     Book an itinerary
@@ -312,8 +304,7 @@ async def book_itinerary(
 async def get_booking_details(
     booking_code: str = Path(..., description="Booking code"),
     traceId: Optional[str] = None,
-    current_user: User = Depends(deps.get_current_active_user),
-    db: AsyncSession = Depends(deps.get_db)
+    current_user: User = Depends(get_current_verified_user),
 ) -> Dict[str, Any]:
     """
     Get booking details
@@ -345,8 +336,7 @@ class CancelBookingRequest(BaseModel):
 async def cancel_booking(
     booking_code: str = Path(..., description="Booking code"),
     request: CancelBookingRequest = ...,
-    current_user: User = Depends(deps.get_current_active_user),
-    db: AsyncSession = Depends(deps.get_db)
+    current_user: User = Depends(get_current_verified_user),
 ) -> Dict[str, Any]:
     """
     Cancel a booking

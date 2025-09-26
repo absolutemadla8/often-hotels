@@ -12,11 +12,17 @@ def setup_logging() -> None:
     """
     Setup structured logging with structlog
     """
+    # Configure basic logging first
+    logging.basicConfig(
+        format="%(message)s",
+        stream=sys.stdout,
+        level=getattr(logging, settings.LOG_LEVEL.upper()),
+    )
+
     timestamper = structlog.processors.TimeStamper(fmt="ISO")
-    
+
     shared_processors: list[Processor] = [
         structlog.contextvars.merge_contextvars,
-        structlog.stdlib.filter_by_level,
         structlog.stdlib.add_logger_name,
         structlog.stdlib.add_log_level,
         structlog.stdlib.PositionalArgumentsFormatter(),
@@ -38,10 +44,6 @@ def setup_logging() -> None:
             wrapper_class=structlog.stdlib.BoundLogger,
             cache_logger_on_first_use=True,
         )
-        formatter = structlog.stdlib.ProcessorFormatter(
-            processor=structlog.processors.JSONRenderer(),
-            foreign_pre_chain=shared_processors,
-        )
     else:
         # Console formatting for development
         structlog.configure(
@@ -53,21 +55,8 @@ def setup_logging() -> None:
             wrapper_class=structlog.stdlib.BoundLogger,
             cache_logger_on_first_use=True,
         )
-        formatter = structlog.stdlib.ProcessorFormatter(
-            processor=structlog.dev.ConsoleRenderer(),
-            foreign_pre_chain=shared_processors,
-        )
-
-    handler = logging.StreamHandler(sys.stdout)
-    handler.setFormatter(formatter)
-    
-    root_logger = logging.getLogger()
-    root_logger.addHandler(handler)
-    root_logger.setLevel(getattr(logging, settings.LOG_LEVEL.upper()))
 
     # Set specific loggers
-    logging.getLogger("uvicorn.access").handlers = [handler]
-    logging.getLogger("uvicorn.error").handlers = [handler]
     logging.getLogger("sqlalchemy.engine").setLevel(logging.WARNING)
 
 

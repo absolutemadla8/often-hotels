@@ -1,10 +1,10 @@
 from typing import Any, List, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, status
-from sqlalchemy.ext.asyncio import AsyncSession
 
 from app import models, schemas
-from app.api import deps
+from app.models.models import User
+from app.api.tortoise_deps import get_optional_current_user, get_current_verified_user, get_current_superuser
 
 router = APIRouter()
 
@@ -49,7 +49,7 @@ async def get_hotels(
     skip: int = 0,
     limit: int = 10,
     location: Optional[str] = None,
-    current_user: Optional[models.User] = Depends(deps.get_optional_current_user),
+    current_user: Optional[models.User] = Depends(get_optional_current_user),
 ) -> Any:
     """
     Get list of hotels. (Public endpoint with optional authentication)
@@ -77,7 +77,7 @@ async def get_hotels(
 @router.get("/{hotel_id}")
 async def get_hotel(
     hotel_id: int,
-    current_user: Optional[models.User] = Depends(deps.get_optional_current_user),
+    current_user: Optional[models.User] = Depends(get_optional_current_user),
 ) -> Any:
     """
     Get hotel details by ID. (Public endpoint with optional authentication)
@@ -108,8 +108,7 @@ async def get_hotel(
 async def book_hotel(
     hotel_id: int,
     booking_data: dict,  # In production, use proper Pydantic model
-    current_user: models.User = Depends(deps.get_current_verified_user),
-    db: AsyncSession = Depends(deps.get_db),
+    current_user: models.User = Depends(get_current_verified_user),
 ) -> Any:
     """
     Book a hotel. (Requires verified user authentication)
@@ -141,7 +140,7 @@ async def book_hotel(
 @router.get("/{hotel_id}/reviews")
 async def get_hotel_reviews(
     hotel_id: int,
-    current_user: models.User = Depends(deps.get_current_active_user),
+    current_user: models.User = Depends(get_current_verified_user),
 ) -> Any:
     """
     Get hotel reviews. (Requires authentication)
@@ -179,7 +178,7 @@ async def get_hotel_reviews(
 async def create_hotel_review(
     hotel_id: int,
     review_data: dict,  # In production, use proper Pydantic model
-    current_user: models.User = Depends(deps.get_current_verified_user),
+    current_user: models.User = Depends(get_current_verified_user),
 ) -> Any:
     """
     Create a hotel review. (Requires verified user authentication)
@@ -207,8 +206,7 @@ async def create_hotel_review(
 
 @router.get("/bookings/my")
 async def get_my_bookings(
-    current_user: models.User = Depends(deps.get_current_active_user),
-    db: AsyncSession = Depends(deps.get_db),
+    current_user: models.User = Depends(get_current_verified_user),
 ) -> Any:
     """
     Get current user's bookings. (Requires authentication)
@@ -233,8 +231,7 @@ async def get_my_bookings(
 
 @router.get("/admin/statistics")
 async def get_admin_statistics(
-    current_user: models.User = Depends(deps.get_current_superuser),
-    db: AsyncSession = Depends(deps.get_db),
+    current_user: models.User = Depends(get_current_superuser),
 ) -> Any:
     """
     Get booking statistics. (Admin only)
@@ -244,7 +241,7 @@ async def get_admin_statistics(
         "total_hotels": len(SAMPLE_HOTELS),
         "total_bookings": 1247,
         "revenue_this_month": 156750.50,
-        "active_users": await crud.user.get_multi(db, limit=1000),  # Count active users
+        "active_users": await User.all().count(),  # Count active users
         "popular_destinations": [
             {"location": "Bali, Indonesia", "bookings": 342},
             {"location": "New York, USA", "bookings": 289},

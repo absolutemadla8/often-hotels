@@ -1,20 +1,18 @@
 from typing import Any, List
 
 from fastapi import APIRouter, Depends, HTTPException, status
-from sqlalchemy.ext.asyncio import AsyncSession
 
 from app import crud, models, schemas
-from app.api import deps
+from app.api.tortoise_deps import get_current_superuser, get_current_active_user
 
 router = APIRouter()
 
 
 @router.get("/", response_model=List[schemas.UserResponse])
 async def read_users(
-    db: AsyncSession = Depends(deps.get_db),
     skip: int = 0,
     limit: int = 100,
-    current_user: models.User = Depends(deps.get_current_superuser),
+    current_user: models.User = Depends(get_current_superuser),
 ) -> Any:
     """
     Retrieve users. (Admin only)
@@ -26,9 +24,8 @@ async def read_users(
 @router.post("/", response_model=schemas.UserResponse)
 async def create_user(
     *,
-    db: AsyncSession = Depends(deps.get_db),
     user_in: schemas.UserCreate,
-    current_user: models.User = Depends(deps.get_current_superuser),
+    current_user: models.User = Depends(get_current_superuser),
 ) -> Any:
     """
     Create new user. (Admin only)
@@ -46,10 +43,9 @@ async def create_user(
 @router.put("/{user_id}", response_model=schemas.UserResponse)
 async def update_user(
     *,
-    db: AsyncSession = Depends(deps.get_db),
     user_id: int,
     user_in: schemas.UserUpdate,
-    current_user: models.User = Depends(deps.get_current_superuser),
+    current_user: models.User = Depends(get_current_superuser),
 ) -> Any:
     """
     Update a user. (Admin only)
@@ -67,8 +63,7 @@ async def update_user(
 @router.get("/{user_id}", response_model=schemas.UserResponse)
 async def read_user_by_id(
     user_id: int,
-    current_user: models.User = Depends(deps.get_current_active_user),
-    db: AsyncSession = Depends(deps.get_db),
+    current_user: models.User = Depends(get_current_active_user),
 ) -> Any:
     """
     Get a specific user by id.
@@ -86,9 +81,8 @@ async def read_user_by_id(
 @router.delete("/{user_id}")
 async def delete_user(
     *,
-    db: AsyncSession = Depends(deps.get_db),
     user_id: int,
-    current_user: models.User = Depends(deps.get_current_superuser),
+    current_user: models.User = Depends(get_current_superuser),
 ) -> Any:
     """
     Delete a user. (Admin only)
@@ -110,9 +104,8 @@ async def delete_user(
 @router.post("/{user_id}/activate")
 async def activate_user(
     *,
-    db: AsyncSession = Depends(deps.get_db),
     user_id: int,
-    current_user: models.User = Depends(deps.get_current_superuser),
+    current_user: models.User = Depends(get_current_superuser),
 ) -> Any:
     """
     Activate a user. (Admin only)
@@ -128,9 +121,8 @@ async def activate_user(
 @router.post("/{user_id}/deactivate")
 async def deactivate_user(
     *,
-    db: AsyncSession = Depends(deps.get_db),
     user_id: int,
-    current_user: models.User = Depends(deps.get_current_superuser),
+    current_user: models.User = Depends(get_current_superuser),
 ) -> Any:
     """
     Deactivate a user. (Admin only)
@@ -154,9 +146,8 @@ async def deactivate_user(
 @router.post("/{user_id}/verify")
 async def verify_user(
     *,
-    db: AsyncSession = Depends(deps.get_db),
     user_id: int,
-    current_user: models.User = Depends(deps.get_current_superuser),
+    current_user: models.User = Depends(get_current_superuser),
 ) -> Any:
     """
     Verify a user. (Admin only)

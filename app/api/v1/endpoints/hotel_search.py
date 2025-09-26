@@ -2,10 +2,9 @@ from typing import Dict, Any, List, Optional
 from datetime import date
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel, Field, field_validator
-from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.api import deps
-from app.models.user import User
+from app.api.tortoise_deps import get_optional_current_user, get_current_active_user
+from app.models.models import User
 from app.services.travclan_api_service import travclan_api_service
 from app.services.hotel_service import HotelService
 
@@ -56,8 +55,7 @@ async def search_hotels(
     filterBy: Optional[FilterByRequest] = None,
     onlyFilter: Optional[bool] = Query(False, description="Only apply filters to existing results"),
     store_price_history: Optional[bool] = Query(True, description="Store price history data"),
-    current_user: User = Depends(deps.get_current_active_user),
-    db: AsyncSession = Depends(deps.get_db)
+    current_user: User = Depends(get_current_active_user),
 ) -> Dict[str, Any]:
     """
     Search for hotels
@@ -81,7 +79,7 @@ async def search_hotels(
         stored_price_histories = []
         if store_price_history:
             try:
-                hotel_service = HotelService(db)
+                hotel_service = HotelService()
                 stored_price_histories = await hotel_service.process_hotel_search_results(
                     search_request=search_data,
                     search_response=response
@@ -115,8 +113,7 @@ async def search_hotels(
 @router.get("/static-content/{hotel_id}")
 async def get_hotel_static_content(
     hotel_id: str,
-    current_user: User = Depends(deps.get_current_active_user),
-    db: AsyncSession = Depends(deps.get_db)
+    current_user: User = Depends(get_current_active_user),
 ) -> Dict[str, Any]:
     """
     Get hotel static content

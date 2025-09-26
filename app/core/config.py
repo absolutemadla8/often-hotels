@@ -39,7 +39,7 @@ class Settings(BaseSettings):
     @model_validator(mode='after')
     def assemble_db_connection(self) -> 'Settings':
         if self.DATABASE_URL is None:
-            self.DATABASE_URL = f"postgresql+asyncpg://{self.POSTGRES_USER}:{self.POSTGRES_PASSWORD}@{self.POSTGRES_SERVER}:{self.POSTGRES_PORT}/{self.POSTGRES_DB}"
+            self.DATABASE_URL = f"postgres://{self.POSTGRES_USER}:{self.POSTGRES_PASSWORD}@{self.POSTGRES_SERVER}:{self.POSTGRES_PORT}/{self.POSTGRES_DB}"
         return self
 
     # Redis for caching and rate limiting
@@ -105,6 +105,18 @@ class Settings(BaseSettings):
     TRAVCLAN_API_KEY: str = ""
     TRAVCLAN_MERCHANT_ID: str = ""
     TRAVCLAN_USER_ID: str = ""
+
+    # Admin Panel Configuration
+    ADMIN_EMAIL: str = "admin@oftenhotels.com"
+    ADMIN_PASSWORD: str = "admin123"
+
+    # SerpApi Configuration
+    SERP_API_KEY: Optional[str] = None
+    SERP_API_BASE_URL: str = "https://serpapi.com/search.json"
+
+    # Upstash Redis Configuration
+    UPSTASH_REDIS_REST_URL: Optional[str] = None
+    UPSTASH_REDIS_REST_TOKEN: Optional[str] = None
 
     model_config = {"case_sensitive": True, "env_file": ".env"}
 
