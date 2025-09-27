@@ -27,7 +27,8 @@ FROM python:3.11-slim as production
 # Set environment variables
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
-    PATH=/root/.local/bin:$PATH
+    PATH=/root/.local/bin:$PATH \
+    PYTHONPATH=/app
 
 # Install runtime dependencies
 RUN apt-get update && apt-get install -y \
@@ -35,9 +36,6 @@ RUN apt-get update && apt-get install -y \
     curl \
     && rm -rf /var/lib/apt/lists/* \
     && apt-get clean
-
-# Create non-root user for security
-RUN groupadd -r appuser && useradd -r -g appuser appuser
 
 # Copy Python packages from builder stage
 COPY --from=builder /root/.local /root/.local
@@ -47,14 +45,13 @@ WORKDIR /app
 
 # Copy application code
 COPY ./app ./app
-COPY ./alembic ./alembic
-COPY ./alembic.ini .
+COPY ./tortoise_config.py .
 
 # Create logs directory
-RUN mkdir -p /app/logs && chown -R appuser:appuser /app
+RUN mkdir -p /app/logs
 
-# Switch to non-root user
-USER appuser
+# Ensure uvicorn is available
+RUN python -c "import uvicorn; print('uvicorn available')"
 
 # Health check
 HEALTHCHECK --interval=30s --timeout=30s --start-period=5s --retries=3 \
@@ -63,5 +60,5 @@ HEALTHCHECK --interval=30s --timeout=30s --start-period=5s --retries=3 \
 # Expose port
 EXPOSE 8000
 
-# Default command
-CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]
+# Default command - use python -m to avoid path issues
+CMD ["python", "-m", "uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]

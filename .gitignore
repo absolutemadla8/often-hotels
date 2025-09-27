@@ -5,8 +5,9 @@ env/
 *.env
 
 # Database
-*.db
-*.sqlite3
+# PostgreSQL dumps and logs
+*.sql
+*.log
 
 # Python
 __pycache__/

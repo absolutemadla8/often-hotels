@@ -4,7 +4,6 @@ uvicorn[standard]
 
 # Database
 asyncpg
-aiosqlite
 
 # Authentication and Security
 python-jose[cryptography]

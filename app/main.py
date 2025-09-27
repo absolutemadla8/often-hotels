@@ -40,16 +40,14 @@ async def lifespan(app: FastAPI):
         if 'sslmode=require' in db_url:
             db_url = db_url.replace('?sslmode=require', '').replace('&sslmode=require', '')
     elif not db_url:
-        # Default to SQLite if no URL is provided
-        import os
-        db_path = os.path.abspath('often_hotels.db')
-        db_url = f'sqlite:///{db_path}'
+        # DATABASE_URL is required for PostgreSQL
+        raise ValueError("DATABASE_URL environment variable is required")
 
     TORTOISE_ORM = {
         "connections": {"default": db_url},
         "apps": {
             "models": {
-                "models": ["app.models.models", "aerich.models"],
+                "models": ["app.models.models"],
                 "default_connection": "default",
             },
         },

@@ -3,7 +3,6 @@ from typing import Any, Dict, List, Optional, Union
 
 from pydantic import AnyHttpUrl, EmailStr, HttpUrl, field_validator, model_validator
 from pydantic_settings import BaseSettings
-from sqlalchemy import URL
 
 
 class Settings(BaseSettings):

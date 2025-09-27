@@ -4,7 +4,7 @@ from typing import Union
 from fastapi import HTTPException, Request, status
 from fastapi.exceptions import RequestValidationError, ValidationException
 from fastapi.responses import JSONResponse
-from sqlalchemy.exc import IntegrityError, SQLAlchemyError
+from tortoise.exceptions import IntegrityError, DoesNotExist, ValidationError as TortoiseValidationError
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from app.core.logging import get_logger
@@ -72,11 +72,11 @@ async def validation_exception_handler(
     )
 
 
-async def sqlalchemy_exception_handler(
-    request: Request, exc: SQLAlchemyError
+async def tortoise_exception_handler(
+    request: Request, exc: IntegrityError
 ) -> JSONResponse:
     """
-    Handle SQLAlchemy database errors
+    Handle Tortoise ORM database errors
     """
     error_message = "Database error occurred"
     status_code = status.HTTP_500_INTERNAL_SERVER_ERROR
@@ -173,7 +173,9 @@ def setup_exception_handlers(app):
     app.add_exception_handler(StarletteHTTPException, http_exception_handler)
     app.add_exception_handler(RequestValidationError, validation_exception_handler)
     app.add_exception_handler(ValidationException, validation_exception_handler)
-    app.add_exception_handler(SQLAlchemyError, sqlalchemy_exception_handler)
+    app.add_exception_handler(IntegrityError, tortoise_exception_handler)
+    app.add_exception_handler(DoesNotExist, http_exception_handler)
+    app.add_exception_handler(TortoiseValidationError, validation_exception_handler)
     app.add_exception_handler(Exception, generic_exception_handler)
     
     # Rate limiting (if using slowapi)

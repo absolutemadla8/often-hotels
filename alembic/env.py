@@ -20,10 +20,11 @@ config = context.config
 
 # Override the sqlalchemy.url with the one from settings
 url = str(settings.DATABASE_URL)
-if url.startswith("sqlite+aiosqlite"):
-    url = url.replace("+aiosqlite", "")
-else:
-    url = url.replace("+asyncpg", "")
+# Handle PostgreSQL URL format for SQLAlchemy
+if url.startswith("postgresql://"):
+    url = url.replace("postgresql://", "postgresql+asyncpg://", 1)
+elif url.startswith("postgres://"):
+    url = url.replace("postgres://", "postgresql+asyncpg://", 1)
 config.set_main_option("sqlalchemy.url", url)
 
 # Interpret the config file for Python logging.
@@ -82,10 +83,11 @@ async def run_migrations_online() -> None:
     
     configuration = config.get_section(config.config_ini_section)
     url = str(settings.DATABASE_URL)
-    if url.startswith("sqlite+aiosqlite"):
-        url = url.replace("+aiosqlite", "")
-    else:
-        url = url.replace("+asyncpg", "")
+    # Handle PostgreSQL URL format for SQLAlchemy
+    if url.startswith("postgresql://"):
+        url = url.replace("postgresql://", "postgresql+asyncpg://", 1)
+    elif url.startswith("postgres://"):
+        url = url.replace("postgres://", "postgresql+asyncpg://", 1)
     configuration["sqlalchemy.url"] = url
     
     connectable = engine_from_config(

@@ -11,15 +11,21 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), 'app'))
 from core.config import settings
 
 async def create_tables():
-    # Initialize Tortoise ORM with same config as main.py
-    # Use absolute path for SQLite database
-    db_url = f"sqlite://{os.path.abspath('often_hotels.db')}"
+    # Initialize Tortoise ORM with PostgreSQL config
+    db_url = settings.DATABASE_URL
+    
+    if not db_url:
+        raise ValueError("DATABASE_URL environment variable is required")
+    
+    # Handle PostgreSQL URL format for Tortoise ORM
+    if db_url.startswith('postgresql://'):
+        db_url = db_url.replace('postgresql://', 'postgres://', 1)
 
     TORTOISE_ORM = {
         "connections": {"default": db_url},
         "apps": {
             "models": {
-                "models": ["app.models.models", "aerich.models"],
+                "models": ["app.models.models"],
                 "default_connection": "default",
             },
         },

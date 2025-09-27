@@ -12,15 +12,22 @@ from app.models.models import User
 from app.core.security import get_password_hash
 
 async def create_default_user():
-    # Initialize Tortoise ORM with same config as main.py
-    db_path = os.path.abspath('often_hotels.db')
-    db_url = f'sqlite:///{db_path}'
+    # Initialize Tortoise ORM with PostgreSQL config
+    from app.core.config import settings
+    db_url = settings.DATABASE_URL
+    
+    if not db_url:
+        raise ValueError("DATABASE_URL environment variable is required")
+    
+    # Handle PostgreSQL URL format for Tortoise ORM
+    if db_url.startswith('postgresql://'):
+        db_url = db_url.replace('postgresql://', 'postgres://', 1)
 
     TORTOISE_ORM = {
         "connections": {"default": db_url},
         "apps": {
             "models": {
-                "models": ["app.models.models", "aerich.models"],
+                "models": ["app.models.models"],
                 "default_connection": "default",
             },
         },

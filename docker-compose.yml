@@ -9,12 +9,16 @@ services:
     ports:
       - "8000:8000"
     environment:
-      - DATABASE_URL=postgresql+asyncpg://postgres:password@db:5432/often_hotels
+      # Database - using Docker PostgreSQL container
+      - DATABASE_URL=postgres://postgres:password@db:5432/often_hotels
+      # Redis - using Docker Redis container  
       - REDIS_URL=redis://redis:6379/0
-      - SECRET_KEY=your-super-secret-key-change-in-production
-      - BACKEND_CORS_ORIGINS=["http://localhost:3000","http://localhost:8080"]
-      - LOG_LEVEL=INFO
-      - LOG_FORMAT=json
+      # Security
+      - SECRET_KEY=${SECRET_KEY:-your-secret-key-here}
+      # SerpAPI
+      - SERP_API_KEY=${SERP_API_KEY:-your-serp-api-key-here}
+      # TravClan API
+      - TRAVCLAN_API_KEY=${TRAVCLAN_API_KEY:-your-travclan-api-key-here}
     depends_on:
       db:
         condition: service_healthy
@@ -35,7 +39,7 @@ services:
       - POSTGRES_DB=often_hotels
       - POSTGRES_INITDB_ARGS=--auth-host=scram-sha-256 --auth-local=scram-sha-256
     ports:
-      - "5432:5432"
+      - "5433:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
       - ./scripts/init-db.sql:/docker-entrypoint-initdb.d/init-db.sql:ro
@@ -52,7 +56,7 @@ services:
     image: redis:7-alpine
     container_name: often-hotels-redis
     ports:
-      - "6379:6379"
+      - "6380:6379"
     command: redis-server --appendonly yes --requirepass ""
     volumes:
       - redis_data:/data
@@ -65,61 +69,27 @@ services:
       timeout: 3s
       retries: 5
 
-  nginx:
-    image: nginx:alpine
-    container_name: often-hotels-nginx
-    ports:
-      - "80:80"
-      - "443:443"
-    volumes:
-      - ./nginx/nginx.conf:/etc/nginx/nginx.conf:ro
-      - ./nginx/ssl:/etc/nginx/ssl:ro
-    depends_on:
-      - app
-    networks:
-      - app-network
-    restart: unless-stopped
-
-  prometheus:
-    image: prom/prometheus:latest
-    container_name: often-hotels-prometheus
-    ports:
-      - "9090:9090"
-    volumes:
-      - ./monitoring/prometheus.yml:/etc/prometheus/prometheus.yml:ro
-      - prometheus_data:/prometheus
-    command:
-      - '--config.file=/etc/prometheus/prometheus.yml'
-      - '--storage.tsdb.path=/prometheus'
-      - '--web.console.libraries=/etc/prometheus/console_libraries'
-      - '--web.console.templates=/etc/prometheus/consoles'
-      - '--web.enable-lifecycle'
-    networks:
-      - app-network
-    restart: unless-stopped
-
-  grafana:
-    image: grafana/grafana:latest
-    container_name: often-hotels-grafana
-    ports:
-      - "3000:3000"
-    environment:
-      - GF_SECURITY_ADMIN_USER=admin
-      - GF_SECURITY_ADMIN_PASSWORD=admin
-    volumes:
-      - grafana_data:/var/lib/grafana
-      - ./monitoring/grafana/provisioning:/etc/grafana/provisioning:ro
-    depends_on:
-      - prometheus
-    networks:
-      - app-network
-    restart: unless-stopped
+  # Nginx, Prometheus, and Grafana are commented out for simpler setup
+  # Uncomment these services if you need monitoring and reverse proxy
+  
+  # nginx:
+  #   image: nginx:alpine
+  #   container_name: often-hotels-nginx
+  #   ports:
+  #     - "80:80"
+  #     - "443:443"
+  #   volumes:
+  #     - ./nginx/nginx.conf:/etc/nginx/nginx.conf:ro
+  #     - ./nginx/ssl:/etc/nginx/ssl:ro
+  #   depends_on:
+  #     - app
+  #   networks:
+  #     - app-network
+  #   restart: unless-stopped
 
 volumes:
   postgres_data:
   redis_data:
-  prometheus_data:
-  grafana_data:
 
 networks:
   app-network:
