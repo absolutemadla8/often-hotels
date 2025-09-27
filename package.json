@@ -1,0 +1,16 @@
+{
+  "name": "often-hotels-prisma",
+  "version": "1.0.0",
+  "description": "Prisma Studio for Often Hotels database visualization",
+  "scripts": {
+    "db:studio": "prisma studio --port 5557",
+    "db:introspect": "prisma db pull",
+    "db:generate": "prisma generate",
+    "db:sync": "prisma db pull && prisma generate",
+    "postinstall": "prisma generate"
+  },
+  "devDependencies": {
+    "prisma": "^5.7.0",
+    "@prisma/client": "^5.7.0"
+  }
+}

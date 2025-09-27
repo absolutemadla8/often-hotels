@@ -41,6 +41,7 @@ email-validator
 
 # Background Tasks
 celery[redis]
+flower
 
 # File handling
 aiofiles

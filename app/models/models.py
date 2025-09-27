@@ -41,6 +41,15 @@ class AirportSize(str, Enum):
     REGIONAL = "regional"
 
 
+class TaskStatus(str, Enum):
+    PENDING = "pending"
+    STARTED = "started"
+    SUCCESS = "success"
+    FAILURE = "failure"
+    RETRY = "retry"
+    REVOKED = "revoked"
+
+
 class FlightType(str, Enum):
     SCHEDULED = "scheduled"
     CHARTER = "charter"
@@ -964,3 +973,61 @@ class TrackerAlert(Model):
 
     def __str__(self):
         return f"{self.alert_type} - {self.tracker.name}"
+
+
+# Task System for Celery Background Jobs
+class Task(Model):
+    """Model to track Celery background tasks"""
+    id = fields.IntField(pk=True)
+    task_id = fields.CharField(max_length=255, unique=True)  # Celery task ID
+    task_name = fields.CharField(max_length=255)  # Task function name
+    task_type = fields.CharField(max_length=100)  # email, hotel_sync, cleanup, etc.
+    status = fields.CharEnumField(TaskStatus, default=TaskStatus.PENDING)
+    user = fields.ForeignKeyField("models.User", related_name="tasks", on_delete=fields.CASCADE, null=True)
+    
+    # Task execution details
+    started_at = fields.DatetimeField(null=True)
+    completed_at = fields.DatetimeField(null=True)
+    execution_time_seconds = fields.FloatField(null=True)
+    
+    # Task data
+    task_args = fields.JSONField(null=True)  # Task arguments
+    task_kwargs = fields.JSONField(null=True)  # Task keyword arguments
+    result = fields.JSONField(null=True)  # Task result
+    error_message = fields.TextField(null=True)  # Error details if failed
+    traceback = fields.TextField(null=True)  # Full traceback on error
+    
+    # Progress tracking
+    progress_current = fields.IntField(default=0)
+    progress_total = fields.IntField(default=100)
+    progress_message = fields.CharField(max_length=500, null=True)
+    
+    # Retry information
+    retry_count = fields.IntField(default=0)
+    max_retries = fields.IntField(default=3)
+    
+    # Queue and priority
+    queue_name = fields.CharField(max_length=100, null=True)
+    priority = fields.IntField(default=0)
+    
+    # Timestamps
+    created_at = fields.DatetimeField(auto_now_add=True)
+    updated_at = fields.DatetimeField(auto_now=True)
+    
+    @property
+    def progress_percentage(self) -> float:
+        """Calculate progress as percentage"""
+        if self.progress_total == 0:
+            return 0.0
+        return (self.progress_current / self.progress_total) * 100
+    
+    @property
+    def is_finished(self) -> bool:
+        """Check if task is in a finished state"""
+        return self.status in [TaskStatus.SUCCESS, TaskStatus.FAILURE, TaskStatus.REVOKED]
+    
+    class Meta:
+        table = "tasks"
+    
+    def __str__(self):
+        return f"{self.task_name} ({self.status})"

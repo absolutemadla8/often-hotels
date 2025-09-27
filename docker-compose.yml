@@ -69,6 +69,115 @@ services:
       timeout: 3s
       retries: 5
 
+  # Celery Workers for background task processing
+  celery-worker:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: often-hotels-celery-worker
+    command: celery -A app.core.celery_app:celery_app worker --loglevel=info --concurrency=4
+    environment:
+      # Database - using Docker PostgreSQL container
+      - DATABASE_URL=postgres://postgres:password@db:5432/often_hotels
+      # Redis - using Docker Redis container  
+      - REDIS_URL=redis://redis:6379/0
+      # Security
+      - SECRET_KEY=${SECRET_KEY:-your-secret-key-here}
+      # SerpAPI
+      - SERP_API_KEY=${SERP_API_KEY:-your-serp-api-key-here}
+      # TravClan API
+      - TRAVCLAN_API_KEY=${TRAVCLAN_API_KEY:-your-travclan-api-key-here}
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    volumes:
+      - ./logs:/app/logs
+    networks:
+      - app-network
+    restart: unless-stopped
+
+  # Celery Beat Scheduler for periodic tasks
+  celery-beat:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: often-hotels-celery-beat
+    command: celery -A app.core.celery_app:celery_app beat --loglevel=info
+    environment:
+      # Database - using Docker PostgreSQL container
+      - DATABASE_URL=postgres://postgres:password@db:5432/often_hotels
+      # Redis - using Docker Redis container  
+      - REDIS_URL=redis://redis:6379/0
+      # Security
+      - SECRET_KEY=${SECRET_KEY:-your-secret-key-here}
+      # SerpAPI
+      - SERP_API_KEY=${SERP_API_KEY:-your-serp-api-key-here}
+      # TravClan API
+      - TRAVCLAN_API_KEY=${TRAVCLAN_API_KEY:-your-travclan-api-key-here}
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    volumes:
+      - ./logs:/app/logs
+      - celery_beat_data:/app/celerybeat-schedule
+    networks:
+      - app-network
+    restart: unless-stopped
+
+  # Celery Flower for task monitoring (optional)
+  celery-flower:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: often-hotels-celery-flower
+    command: celery -A app.core.celery_app:celery_app flower --port=5555
+    ports:
+      - "5555:5555"
+    environment:
+      # Database - using Docker PostgreSQL container
+      - DATABASE_URL=postgres://postgres:password@db:5432/often_hotels
+      # Redis - using Docker Redis container  
+      - REDIS_URL=redis://redis:6379/0
+      # Security
+      - SECRET_KEY=${SECRET_KEY:-your-secret-key-here}
+      # SerpAPI
+      - SERP_API_KEY=${SERP_API_KEY:-your-serp-api-key-here}
+      # TravClan API
+      - TRAVCLAN_API_KEY=${TRAVCLAN_API_KEY:-your-travclan-api-key-here}
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    networks:
+      - app-network
+    restart: unless-stopped
+
+  # Prisma Studio for database visualization
+  prisma-studio:
+    image: node:18-alpine
+    container_name: often-hotels-prisma-studio
+    working_dir: /app
+    command: sh -c "npm install && npx prisma db pull && npx prisma studio --port 5557 --hostname 0.0.0.0"
+    ports:
+      - "5557:5557"
+    environment:
+      - DATABASE_URL=postgres://postgres:password@db:5432/often_hotels
+    volumes:
+      - ./prisma:/app/prisma
+      - ./package.json:/app/package.json
+      - prisma_node_modules:/app/node_modules
+    depends_on:
+      db:
+        condition: service_healthy
+    networks:
+      - app-network
+    restart: unless-stopped
+
   # Nginx, Prometheus, and Grafana are commented out for simpler setup
   # Uncomment these services if you need monitoring and reverse proxy
   
@@ -90,6 +199,8 @@ services:
 volumes:
   postgres_data:
   redis_data:
+  celery_beat_data:
+  prisma_node_modules:
 
 networks:
   app-network:

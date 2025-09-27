@@ -1,0 +1,421 @@
+// Prisma schema for database visualization only
+// This is NOT the source of truth - Tortoise ORM models are
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// User authentication
+model User {
+  id              Int      @id @default(autoincrement())
+  email           String   @unique @db.VarChar(255)
+  hashed_password String   @db.VarChar(255)
+  full_name       String?  @db.VarChar(100)
+  is_active       Boolean  @default(true)
+  is_superuser    Boolean  @default(false)
+  created_at      DateTime @default(now()) @db.Timestamptz(6)
+  updated_at      DateTime @updatedAt @db.Timestamptz(6)
+
+  // Relations
+  refresh_tokens       RefreshToken[]
+  tasks                Task[]
+  universal_bookings   UniversalBooking[]
+  universal_price_alerts UniversalPriceAlert[]
+  trackers             Tracker[]
+  created_trackers     Tracker[] @relation("CreatedTrackers")
+  tracker_alerts       TrackerAlert[]
+  created_clusters     Cluster[]
+
+  @@map("users")
+}
+
+// Refresh tokens for authentication
+model RefreshToken {
+  id         Int      @id @default(autoincrement())
+  user_id    Int
+  token      String   @unique @db.VarChar(255)
+  expires_at DateTime @db.Timestamptz(6)
+  is_revoked Boolean  @default(false)
+  created_at DateTime @default(now()) @db.Timestamptz(6)
+
+  // Relations
+  user User @relation(fields: [user_id], references: [id], onDelete: Cascade)
+
+  @@map("refresh_tokens")
+}
+
+// Celery background tasks
+model Task {
+  id                     Int       @id @default(autoincrement())
+  task_id                String    @unique @db.VarChar(255)
+  task_name              String    @db.VarChar(255)
+  task_type              String    @db.VarChar(100)
+  status                 String    @default("pending") @db.VarChar(50)
+  user_id                Int?
+  started_at             DateTime? @db.Timestamptz(6)
+  completed_at           DateTime? @db.Timestamptz(6)
+  execution_time_seconds Float?
+  task_args              Json?
+  task_kwargs            Json?
+  result                 Json?
+  error_message          String?   @db.Text
+  traceback              String?   @db.Text
+  progress_current       Int       @default(0)
+  progress_total         Int       @default(100)
+  progress_message       String?   @db.VarChar(500)
+  retry_count            Int       @default(0)
+  max_retries            Int       @default(3)
+  queue_name             String?   @db.VarChar(100)
+  priority               Int       @default(0)
+  created_at             DateTime  @default(now()) @db.Timestamptz(6)
+  updated_at             DateTime  @updatedAt @db.Timestamptz(6)
+
+  // Relations
+  user User? @relation(fields: [user_id], references: [id], onDelete: Cascade)
+
+  @@map("tasks")
+}
+
+// Countries
+model Country {
+  id                   Int     @id @default(autoincrement())
+  iso_code_2           String  @unique @db.VarChar(2)
+  iso_code_3           String  @unique @db.VarChar(3)
+  numeric_code         String? @db.VarChar(3)
+  name                 String  @db.VarChar(100)
+  official_name        String? @db.VarChar(255)
+  common_name          String? @db.VarChar(100)
+  continent            String? @db.VarChar(50)
+  region               String? @db.VarChar(100)
+  sub_region           String? @db.VarChar(100)
+  currency_code        String? @db.VarChar(3)
+  currency_name        String? @db.VarChar(50)
+  languages            Json?
+  capital_city         String? @db.VarChar(100)
+  latitude             Float?
+  longitude            Float?
+  calling_code         String? @db.VarChar(10)
+  timezone_info        Json?
+  popular_destinations Json?
+  is_active            Boolean @default(true)
+  is_popular           Boolean @default(false)
+  travel_restrictions  Json?
+  external_ids         Json?
+  created_at           DateTime @default(now()) @db.Timestamptz(6)
+  updated_at           DateTime @updatedAt @db.Timestamptz(6)
+
+  // Relations
+  destinations                Destination[]
+  areas                      Area[]
+  airports                   Airport[]
+  hotels                     Hotel[]
+  cluster_items              ClusterItem[]
+  origin_bookings            UniversalBooking[] @relation("OriginCountry")
+  destination_bookings       UniversalBooking[] @relation("DestinationCountry")
+  origin_price_history       UniversalPriceHistory[] @relation("OriginCountryHistory")
+  destination_price_history  UniversalPriceHistory[] @relation("DestinationCountryHistory")
+  trackers                   Tracker[]
+  origin_trackers            Tracker[] @relation("OriginTrackers")
+
+  @@map("countries")
+}
+
+// Hotels
+model Hotel {
+  id                    Int      @id @default(autoincrement())
+  country_id            Int
+  destination_id        Int
+  area_id               Int?
+  external_id           String   @db.VarChar(255)
+  partner_name          String   @db.VarChar(100)
+  name                  String   @db.VarChar(255)
+  display_name          String?  @db.VarChar(300)
+  brand_name            String?  @db.VarChar(100)
+  description           String?  @db.Text
+  short_description     String?  @db.VarChar(500)
+  address               String   @db.Text
+  city                  String   @db.VarChar(100)
+  postal_code           String?  @db.VarChar(20)
+  latitude              Float?
+  longitude             Float?
+  hotel_type            String   @default("hotel") @db.VarChar(50)
+  hotel_chain           String   @default("independent") @db.VarChar(50)
+  star_rating           Int?
+  official_rating       String?  @db.VarChar(20)
+  guest_rating          Float?
+  guest_rating_count    Int      @default(0)
+  phone_number          String?  @db.VarChar(50)
+  email                 String?  @db.VarChar(255)
+  website_url           String?  @db.VarChar(500)
+  year_built            Int?
+  year_renovated        Int?
+  total_rooms           Int?
+  total_floors          Int?
+  check_in_time         String?  @db.VarChar(10)
+  check_out_time        String?  @db.VarChar(10)
+  amenities             Json?
+  images                Json?
+  facilities            Json?
+  accessibility_features Json?
+  pet_policy            Json?
+  children_policy       Json?
+  is_active             Boolean  @default(true)
+  is_bookable           Boolean  @default(true)
+  is_featured           Boolean  @default(false)
+  is_popular            Boolean  @default(false)
+  business_center       Boolean  @default(false)
+  meeting_rooms         Int      @default(0)
+  conference_facilities Json?
+  sustainability_certifications Json?
+  sustainability_score  Float?
+  currency              String   @default("USD") @db.VarChar(3)
+  typical_price_range   String?  @db.VarChar(20)
+  price_level           Int?
+  api_last_updated      DateTime? @db.Timestamptz(6)
+  api_data              Json?
+  external_ids          Json?
+  slug                  String?  @unique @db.VarChar(200)
+  meta_title            String?  @db.VarChar(200)
+  meta_description      String?  @db.Text
+  keywords              Json?
+  view_count            Int      @default(0)
+  booking_count         Int      @default(0)
+  popularity_score      Float    @default(0.0)
+  last_booked           DateTime? @db.Timestamptz(6)
+  created_at            DateTime @default(now()) @db.Timestamptz(6)
+  updated_at            DateTime @updatedAt @db.Timestamptz(6)
+  last_verified         DateTime? @db.Timestamptz(6)
+
+  // Relations
+  country     Country @relation(fields: [country_id], references: [id], onDelete: Cascade)
+  destination Destination @relation(fields: [destination_id], references: [id], onDelete: Cascade)
+  area        Area?   @relation(fields: [area_id], references: [id], onDelete: SetNull)
+  rooms       Room[]
+
+  @@unique([external_id, partner_name])
+  @@map("hotels")
+}
+
+// Simplified models - add others as needed
+model Destination {
+  id         Int     @id @default(autoincrement())
+  country_id Int
+  name       String  @db.VarChar(100)
+  latitude   Float
+  longitude  Float
+  is_active  Boolean @default(true)
+  created_at DateTime @default(now()) @db.Timestamptz(6)
+  updated_at DateTime @updatedAt @db.Timestamptz(6)
+
+  // Relations
+  country Country @relation(fields: [country_id], references: [id], onDelete: Cascade)
+  areas   Area[]
+  airports Airport[]
+  hotels  Hotel[]
+
+  @@map("destinations")
+}
+
+model Area {
+  id             Int     @id @default(autoincrement())
+  destination_id Int
+  country_id     Int
+  name           String  @db.VarChar(100)
+  is_active      Boolean @default(true)
+  created_at     DateTime @default(now()) @db.Timestamptz(6)
+  updated_at     DateTime @updatedAt @db.Timestamptz(6)
+
+  // Relations
+  destination Destination @relation(fields: [destination_id], references: [id], onDelete: Cascade)
+  country     Country @relation(fields: [country_id], references: [id], onDelete: Cascade)
+  hotels      Hotel[]
+
+  @@map("areas")
+}
+
+model Airport {
+  id             Int     @id @default(autoincrement())
+  country_id     Int
+  destination_id Int?
+  iata_code      String  @unique @db.VarChar(3)
+  name           String  @db.VarChar(255)
+  city           String  @db.VarChar(100)
+  latitude       Float
+  longitude      Float
+  is_active      Boolean @default(true)
+  created_at     DateTime @default(now()) @db.Timestamptz(6)
+  updated_at     DateTime @updatedAt @db.Timestamptz(6)
+
+  // Relations
+  country     Country @relation(fields: [country_id], references: [id], onDelete: Cascade)
+  destination Destination? @relation(fields: [destination_id], references: [id], onDelete: SetNull)
+
+  @@map("airports")
+}
+
+model Room {
+  id               Int     @id @default(autoincrement())
+  hotel_id         Int
+  external_id      String  @db.VarChar(255)
+  name             String  @db.VarChar(255)
+  room_type        String  @default("standard") @db.VarChar(50)
+  max_occupancy    Int     @default(2)
+  is_active        Boolean @default(true)
+  created_at       DateTime @default(now()) @db.Timestamptz(6)
+  updated_at       DateTime @updatedAt @db.Timestamptz(6)
+
+  // Relations
+  hotel Hotel @relation(fields: [hotel_id], references: [id], onDelete: Cascade)
+
+  @@unique([hotel_id, external_id])
+  @@map("rooms")
+}
+
+// Simplified other models
+model UniversalBooking {
+  id               Int     @id @default(autoincrement())
+  user_id          Int
+  booking_reference String @unique @db.VarChar(100)
+  travel_start_date DateTime @db.Date
+  status           String  @default("active") @db.VarChar(50)
+  created_at       DateTime @default(now()) @db.Timestamptz(6)
+  updated_at       DateTime @updatedAt @db.Timestamptz(6)
+
+  // Relations
+  user User @relation(fields: [user_id], references: [id], onDelete: Cascade)
+  origin_country      Country? @relation("OriginCountry", fields: [origin_country_id], references: [id], onDelete: SetNull)
+  destination_country Country? @relation("DestinationCountry", fields: [destination_country_id], references: [id], onDelete: SetNull)
+  origin_country_id      Int?
+  destination_country_id Int?
+  price_alerts UniversalPriceAlert[]
+
+  @@map("universal_bookings")
+}
+
+model UniversalPriceAlert {
+  id         Int     @id @default(autoincrement())
+  booking_id Int
+  user_id    Int
+  alert_type String  @db.VarChar(50)
+  created_at DateTime @default(now()) @db.Timestamptz(6)
+
+  // Relations
+  booking UniversalBooking @relation(fields: [booking_id], references: [id], onDelete: Cascade)
+  user    User @relation(fields: [user_id], references: [id], onDelete: Cascade)
+
+  @@map("universal_price_alerts")
+}
+
+model UniversalPriceHistory {
+  id           Int     @id @default(autoincrement())
+  price_date   DateTime @db.Date
+  search_date  DateTime @db.Date
+  price        Decimal @db.Decimal(12, 2)
+  currency     String  @default("USD") @db.VarChar(3)
+  data_source  String  @db.VarChar(100)
+  recorded_at  DateTime @default(now()) @db.Timestamptz(6)
+  created_at   DateTime @default(now()) @db.Timestamptz(6)
+  updated_at   DateTime @updatedAt @db.Timestamptz(6)
+
+  // Relations
+  origin_country      Country? @relation("OriginCountryHistory", fields: [origin_country_id], references: [id], onDelete: SetNull)
+  destination_country Country? @relation("DestinationCountryHistory", fields: [destination_country_id], references: [id], onDelete: SetNull)
+  origin_country_id      Int?
+  destination_country_id Int?
+
+  @@map("universal_price_history")
+}
+
+model Cluster {
+  id              Int     @id @default(autoincrement())
+  name            String  @db.VarChar(200)
+  cluster_type    String  @default("geographic") @db.VarChar(50)
+  is_active       Boolean @default(true)
+  created_by_user_id Int?
+  created_at      DateTime @default(now()) @db.Timestamptz(6)
+  updated_at      DateTime @updatedAt @db.Timestamptz(6)
+
+  // Relations
+  created_by_user User? @relation(fields: [created_by_user_id], references: [id], onDelete: SetNull)
+  items           ClusterItem[]
+  trackers        Tracker[]
+
+  @@map("clusters")
+}
+
+model ClusterItem {
+  id         Int     @id @default(autoincrement())
+  cluster_id Int
+  item_type  String  @db.VarChar(50)
+  item_id    Int
+  is_active  Boolean @default(true)
+  created_at DateTime @default(now()) @db.Timestamptz(6)
+  updated_at DateTime @updatedAt @db.Timestamptz(6)
+
+  // Relations
+  cluster Cluster @relation(fields: [cluster_id], references: [id], onDelete: Cascade)
+  country Country? @relation(fields: [country_id], references: [id], onDelete: Cascade)
+  country_id Int?
+
+  @@unique([cluster_id, item_type, item_id])
+  @@map("cluster_items")
+}
+
+model Tracker {
+  id               Int     @id @default(autoincrement())
+  user_id          Int
+  created_by_user_id Int?
+  name             String  @db.VarChar(255)
+  tracker_type     String  @default("hotel_search") @db.VarChar(50)
+  start_date       DateTime @db.Date
+  end_date         DateTime @db.Date
+  status           String  @default("active") @db.VarChar(50)
+  created_at       DateTime @default(now()) @db.Timestamptz(6)
+  updated_at       DateTime @updatedAt @db.Timestamptz(6)
+
+  // Relations
+  user            User @relation(fields: [user_id], references: [id], onDelete: Cascade)
+  created_by_user User? @relation("CreatedTrackers", fields: [created_by_user_id], references: [id], onDelete: SetNull)
+  country         Country? @relation(fields: [country_id], references: [id], onDelete: Cascade)
+  origin_country  Country? @relation("OriginTrackers", fields: [origin_country_id], references: [id], onDelete: Cascade)
+  cluster         Cluster? @relation(fields: [cluster_id], references: [id], onDelete: SetNull)
+  country_id         Int?
+  origin_country_id  Int?
+  cluster_id         Int?
+  tracker_results    TrackerResult[]
+  tracker_alerts     TrackerAlert[]
+
+  @@map("trackers")
+}
+
+model TrackerResult {
+  id         Int     @id @default(autoincrement())
+  tracker_id Int
+  run_id     String  @db.VarChar(100)
+  success    Boolean @default(false)
+  created_at DateTime @default(now()) @db.Timestamptz(6)
+
+  // Relations
+  tracker Tracker @relation(fields: [tracker_id], references: [id], onDelete: Cascade)
+
+  @@map("tracker_results")
+}
+
+model TrackerAlert {
+  id         Int     @id @default(autoincrement())
+  tracker_id Int
+  user_id    Int
+  alert_type String  @db.VarChar(50)
+  created_at DateTime @default(now()) @db.Timestamptz(6)
+
+  // Relations
+  tracker Tracker @relation(fields: [tracker_id], references: [id], onDelete: Cascade)
+  user    User @relation(fields: [user_id], references: [id], onDelete: Cascade)
+
+  @@map("tracker_alerts")
+}
