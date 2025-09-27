@@ -1,5 +1,3 @@
-version: '3.8'
-
 services:
   app:
     build:
@@ -104,7 +102,7 @@ services:
       context: .
       dockerfile: Dockerfile
     container_name: often-hotels-celery-beat
-    command: celery -A app.core.celery_app:celery_app beat --loglevel=info
+    command: celery -A app.core.celery_app:celery_app beat --loglevel=info --schedule=/app/celerybeat/celerybeat-schedule
     environment:
       # Database - using Docker PostgreSQL container
       - DATABASE_URL=postgres://postgres:password@db:5432/often_hotels
@@ -123,7 +121,7 @@ services:
         condition: service_healthy
     volumes:
       - ./logs:/app/logs
-      - celery_beat_data:/app/celerybeat-schedule
+      - celery_beat_data:/app/celerybeat
     networks:
       - app-network
     restart: unless-stopped
@@ -162,7 +160,7 @@ services:
     image: node:18-alpine
     container_name: often-hotels-prisma-studio
     working_dir: /app
-    command: sh -c "npm install && npx prisma db pull && npx prisma studio --port 5557 --hostname 0.0.0.0"
+    command: sh -c "apk add --no-cache openssl && npm install && npx prisma db pull --force && npx prisma studio --port 5557 --hostname 0.0.0.0"
     ports:
       - "5557:5557"
     environment:
