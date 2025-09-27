@@ -301,6 +301,8 @@ class Destination(Model):
     keywords = fields.JSONField(null=True)
     created_at = fields.DatetimeField(auto_now_add=True)
     updated_at = fields.DatetimeField(auto_now=True)
+    tracking   = fields.BooleanField(default=False)
+    numberOfDaysToTrack = fields.IntField(default=30)
 
     areas: fields.ReverseRelation["Area"]
     airports: fields.ReverseRelation["Airport"]
