@@ -23,6 +23,7 @@ services:
       redis:
         condition: service_healthy
     volumes:
+      - ./app:/app/app
       - ./logs:/app/logs
     networks:
       - app-network
@@ -73,7 +74,7 @@ services:
       context: .
       dockerfile: Dockerfile
     container_name: often-hotels-celery-worker
-    command: celery -A app.core.celery_app:celery_app worker --loglevel=info --concurrency=4
+    command: celery -A app.core.celery_app:celery_app worker --loglevel=info --concurrency=1 --pool=solo
     environment:
       # Database - using Docker PostgreSQL container
       - DATABASE_URL=postgres://postgres:password@db:5432/often_hotels
@@ -91,6 +92,7 @@ services:
       redis:
         condition: service_healthy
     volumes:
+      - ./app:/app/app
       - ./logs:/app/logs
     networks:
       - app-network
@@ -120,6 +122,7 @@ services:
       redis:
         condition: service_healthy
     volumes:
+      - ./app:/app/app
       - ./logs:/app/logs
       - celery_beat_data:/app/celerybeat
     networks:
@@ -151,6 +154,9 @@ services:
         condition: service_healthy
       redis:
         condition: service_healthy
+    volumes:
+      - ./app:/app/app
+      - ./logs:/app/logs
     networks:
       - app-network
     restart: unless-stopped

@@ -272,7 +272,7 @@ class SerpApiService:
             params["rating"] = criteria.rating.value
 
         if criteria.hotel_class:
-            params["hotel_class"] = ",".join([hc.value for hc in criteria.hotel_class])
+            params["hotel_class"] = ",".join([str(hc.value) for hc in criteria.hotel_class])
 
         if criteria.free_cancellation is not None:
             params["free_cancellation"] = criteria.free_cancellation

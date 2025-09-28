@@ -13,7 +13,7 @@ ALGORITHM = "HS256"
 
 
 def create_access_token(
-    subject: Union[str, Any], expires_delta: timedelta = None
+    data: dict = None, subject: Union[str, Any] = None, expires_delta: timedelta = None
 ) -> str:
     if expires_delta:
         expire = datetime.utcnow() + expires_delta
@@ -21,13 +21,20 @@ def create_access_token(
         expire = datetime.utcnow() + timedelta(
             minutes=settings.ACCESS_TOKEN_EXPIRE_MINUTES
         )
-    to_encode = {"exp": expire, "sub": str(subject), "type": "access"}
+    
+    # Handle both old and new calling patterns
+    if data:
+        to_encode = data.copy()
+        to_encode.update({"exp": expire, "type": "access"})
+    else:
+        to_encode = {"exp": expire, "sub": str(subject), "type": "access"}
+    
     encoded_jwt = jwt.encode(to_encode, settings.SECRET_KEY, algorithm=ALGORITHM)
     return encoded_jwt
 
 
 def create_refresh_token(
-    subject: Union[str, Any], expires_delta: timedelta = None
+    data: dict = None, subject: Union[str, Any] = None, expires_delta: timedelta = None
 ) -> str:
     if expires_delta:
         expire = datetime.utcnow() + expires_delta
@@ -35,7 +42,14 @@ def create_refresh_token(
         expire = datetime.utcnow() + timedelta(
             minutes=settings.REFRESH_TOKEN_EXPIRE_MINUTES
         )
-    to_encode = {"exp": expire, "sub": str(subject), "type": "refresh"}
+    
+    # Handle both old and new calling patterns
+    if data:
+        to_encode = data.copy()
+        to_encode.update({"exp": expire, "type": "refresh"})
+    else:
+        to_encode = {"exp": expire, "sub": str(subject), "type": "refresh"}
+    
     encoded_jwt = jwt.encode(to_encode, settings.SECRET_KEY, algorithm=ALGORITHM)
     return encoded_jwt
 
@@ -59,6 +73,17 @@ def verify_token(token: str, token_type: str = "access") -> Union[str, None]:
         if user_id is None:
             return None
         return user_id
+    except jwt.JWTError:
+        return None
+
+
+def decode_token(token: str) -> Union[dict, None]:
+    """Decode JWT token and return payload"""
+    try:
+        payload = jwt.decode(
+            token, settings.SECRET_KEY, algorithms=[settings.ALGORITHM]
+        )
+        return payload
     except jwt.JWTError:
         return None
 

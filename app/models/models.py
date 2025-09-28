@@ -50,6 +50,14 @@ class TaskStatus(str, Enum):
     REVOKED = "revoked"
 
 
+class LogLevel(str, Enum):
+    DEBUG = "debug"
+    INFO = "info"
+    WARNING = "warning"
+    ERROR = "error"
+    CRITICAL = "critical"
+
+
 class FlightType(str, Enum):
     SCHEDULED = "scheduled"
     CHARTER = "charter"
@@ -209,6 +217,7 @@ class User(Model):
     full_name = fields.CharField(max_length=100, null=True)
     is_active = fields.BooleanField(default=True)
     is_superuser = fields.BooleanField(default=False)
+    password_reset_token = fields.CharField(max_length=500, null=True)
     created_at = fields.DatetimeField(auto_now_add=True)
     updated_at = fields.DatetimeField(auto_now=True)
 
@@ -222,6 +231,9 @@ class RefreshToken(Model):
     token = fields.CharField(max_length=255, unique=True)
     expires_at = fields.DatetimeField()
     is_revoked = fields.BooleanField(default=False)
+    is_active = fields.BooleanField(default=True)
+    user_agent = fields.CharField(max_length=500, null=True)
+    ip_address = fields.CharField(max_length=45, null=True)
     created_at = fields.DatetimeField(auto_now_add=True)
 
     class Meta:
@@ -302,7 +314,7 @@ class Destination(Model):
     created_at = fields.DatetimeField(auto_now_add=True)
     updated_at = fields.DatetimeField(auto_now=True)
     tracking   = fields.BooleanField(default=False)
-    numberOfDaysToTrack = fields.IntField(default=30)
+    numberofdaystotrack = fields.IntField(default=3)
 
     areas: fields.ReverseRelation["Area"]
     airports: fields.ReverseRelation["Airport"]
@@ -1033,3 +1045,25 @@ class Task(Model):
     
     def __str__(self):
         return f"{self.task_name} ({self.status})"
+
+
+class TaskLog(Model):
+    """Model to store real-time log messages for tasks"""
+    id = fields.IntField(pk=True)
+    task = fields.ForeignKeyField("models.Task", related_name="logs", on_delete=fields.CASCADE)
+    level = fields.CharEnumField(LogLevel, default=LogLevel.INFO)
+    message = fields.TextField()
+    source = fields.CharField(max_length=100, null=True)  # Function/module name
+    timestamp = fields.DatetimeField(auto_now_add=True)
+    
+    # Optional structured data
+    metadata = fields.JSONField(null=True)  # Additional context
+    phase = fields.CharField(max_length=50, null=True)  # e.g., "destinations", "hotels", "prices"
+    progress_hint = fields.IntField(null=True)  # Progress indicator for this log entry
+    
+    class Meta:
+        table = "task_logs"
+        ordering = ["timestamp"]
+    
+    def __str__(self):
+        return f"{self.level} - {self.message[:50]}..."

@@ -25,18 +25,46 @@ def cleanup_expired_refresh_tokens(self) -> Dict[str, Any]:
 async def _cleanup_expired_refresh_tokens_async(task_instance) -> Dict[str, Any]:
     """Async implementation of refresh token cleanup"""
     task_id = task_instance.request.id
+    tortoise_initialized = False
     
     try:
-        # Initialize Tortoise if not already initialized
-        if not Tortoise._get_db(None):
-            from tortoise_config import TORTOISE_ORM
-            await Tortoise.init(config=TORTOISE_ORM)
+        # Initialize Tortoise for this task if not already initialized
+        from app.core.config import settings
         
-        await task_instance.update_task_status(task_id, TaskStatus.STARTED)
+        try:
+            # Check if Tortoise is properly initialized by trying to get a connection
+            from app.models.models import User
+            try:
+                # Try to access the model's db connection to see if it's properly initialized
+                _ = User._meta.db
+                logger.info(f"Using existing Tortoise connection for cleanup task {task_id}")
+            except:
+                # If we can't access the db, we need to initialize
+                await Tortoise.init(
+                    db_url=settings.DATABASE_URL,
+                    modules={"models": ["app.models.models"]}
+                )
+                tortoise_initialized = True
+                logger.info(f"Tortoise initialized for cleanup task {task_id}")
+        except Exception as e:
+            # Fallback: always try to initialize
+            try:
+                await Tortoise.init(
+                    db_url=settings.DATABASE_URL,
+                    modules={"models": ["app.models.models"]}
+                )
+                tortoise_initialized = True
+                logger.info(f"Tortoise initialized (fallback) for cleanup task {task_id}")
+            except Exception as init_error:
+                logger.error(f"Failed to initialize Tortoise: {init_error}")
+                raise
+        
+        await task_instance.update_task_status(task_id, TaskStatus.STARTED, task_type="cleanup")
         
         await task_instance.update_task_status(
             task_id,
             TaskStatus.STARTED,
+            task_type="cleanup",
             progress_current=20,
             progress_message="Identifying expired refresh tokens"
         )
@@ -53,6 +81,7 @@ async def _cleanup_expired_refresh_tokens_async(task_instance) -> Dict[str, Any]
         await task_instance.update_task_status(
             task_id,
             TaskStatus.STARTED,
+            task_type="cleanup",
             progress_current=80,
             progress_message=f"Cleaned {tokens_cleaned} expired tokens"
         )
@@ -66,14 +95,22 @@ async def _cleanup_expired_refresh_tokens_async(task_instance) -> Dict[str, Any]
         
         logger.info(f"Refresh token cleanup completed: {result}")
         
-        await task_instance.update_task_status(task_id, TaskStatus.SUCCESS, result=result)
+        await task_instance.update_task_status(task_id, TaskStatus.SUCCESS, task_type="cleanup", result=result)
         return result
         
     except Exception as e:
         error_msg = f"Refresh token cleanup failed: {str(e)}"
         logger.error(error_msg)
-        await task_instance.update_task_status(task_id, TaskStatus.FAILURE, error_message=error_msg)
+        await task_instance.update_task_status(task_id, TaskStatus.FAILURE, task_type="cleanup", error_message=error_msg)
         raise
+    finally:
+        # Only close connections if this task initialized them
+        if tortoise_initialized:
+            try:
+                await Tortoise.close_connections()
+                logger.info(f"Closed Tortoise connections for cleanup task {task_id}")
+            except Exception as cleanup_error:
+                logger.warning(f"Error closing Tortoise connections for cleanup task {task_id}: {cleanup_error}")
 
 
 @celery_app.task(bind=True, base=BaseTask)
@@ -85,18 +122,46 @@ def cleanup_old_tasks(self, days_old: int = 30) -> Dict[str, Any]:
 async def _cleanup_old_tasks_async(task_instance, days_old: int) -> Dict[str, Any]:
     """Async implementation of old tasks cleanup"""
     task_id = task_instance.request.id
+    tortoise_initialized = False
     
     try:
-        # Initialize Tortoise if not already initialized
-        if not Tortoise._get_db(None):
-            from tortoise_config import TORTOISE_ORM
-            await Tortoise.init(config=TORTOISE_ORM)
+        # Initialize Tortoise for this task if not already initialized
+        from app.core.config import settings
         
-        await task_instance.update_task_status(task_id, TaskStatus.STARTED)
+        try:
+            # Check if Tortoise is properly initialized by trying to get a connection
+            from app.models.models import Task
+            try:
+                # Try to access the model's db connection to see if it's properly initialized
+                _ = Task._meta.db
+                logger.info(f"Using existing Tortoise connection for old tasks cleanup {task_id}")
+            except:
+                # If we can't access the db, we need to initialize
+                await Tortoise.init(
+                    db_url=settings.DATABASE_URL,
+                    modules={"models": ["app.models.models"]}
+                )
+                tortoise_initialized = True
+                logger.info(f"Tortoise initialized for old tasks cleanup {task_id}")
+        except Exception as e:
+            # Fallback: always try to initialize
+            try:
+                await Tortoise.init(
+                    db_url=settings.DATABASE_URL,
+                    modules={"models": ["app.models.models"]}
+                )
+                tortoise_initialized = True
+                logger.info(f"Tortoise initialized (fallback) for old tasks cleanup {task_id}")
+            except Exception as init_error:
+                logger.error(f"Failed to initialize Tortoise: {init_error}")
+                raise
+        
+        await task_instance.update_task_status(task_id, TaskStatus.STARTED, task_type="cleanup")
         
         await task_instance.update_task_status(
             task_id,
             TaskStatus.STARTED,
+            task_type="cleanup",
             progress_current=20,
             progress_message=f"Finding tasks older than {days_old} days"
         )
@@ -115,6 +180,7 @@ async def _cleanup_old_tasks_async(task_instance, days_old: int) -> Dict[str, An
         await task_instance.update_task_status(
             task_id,
             TaskStatus.STARTED,
+            task_type="cleanup",
             progress_current=40,
             progress_message=f"Found {total_tasks} old tasks to clean up"
         )
@@ -154,11 +220,19 @@ async def _cleanup_old_tasks_async(task_instance, days_old: int) -> Dict[str, An
         
         logger.info(f"Old tasks cleanup completed: {result}")
         
-        await task_instance.update_task_status(task_id, TaskStatus.SUCCESS, result=result)
+        await task_instance.update_task_status(task_id, TaskStatus.SUCCESS, task_type="cleanup", result=result)
         return result
         
     except Exception as e:
         error_msg = f"Old tasks cleanup failed: {str(e)}"
         logger.error(error_msg)
-        await task_instance.update_task_status(task_id, TaskStatus.FAILURE, error_message=error_msg)
+        await task_instance.update_task_status(task_id, TaskStatus.FAILURE, task_type="cleanup", error_message=error_msg)
         raise
+    finally:
+        # Only close connections if this task initialized them
+        if tortoise_initialized:
+            try:
+                await Tortoise.close_connections()
+                logger.info(f"Closed Tortoise connections for old tasks cleanup {task_id}")
+            except Exception as cleanup_error:
+                logger.warning(f"Error closing Tortoise connections for old tasks cleanup {task_id}: {cleanup_error}")

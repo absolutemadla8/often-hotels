@@ -13,6 +13,7 @@ celery_app = Celery(
     include=[
         "app.tasks.email_tasks",
         "app.tasks.hotel_tasks", 
+        "app.tasks.hotel_tracking_tasks",
         "app.tasks.notification_tasks",
         "app.tasks.cleanup_tasks"
     ]
@@ -43,13 +44,14 @@ celery_app.conf.update(
     worker_prefetch_multiplier=1,
     worker_max_tasks_per_child=1000,
     
-    # Task Routing
-    task_routes={
-        "app.tasks.email_tasks.*": {"queue": "email"},
-        "app.tasks.hotel_tasks.*": {"queue": "hotel_processing"},
-        "app.tasks.notification_tasks.*": {"queue": "notifications"},
-        "app.tasks.cleanup_tasks.*": {"queue": "maintenance"},
-    },
+    # Task Routing - temporarily disabled to use default queue
+    # task_routes={
+    #     "app.tasks.email_tasks.*": {"queue": "email"},
+    #     "app.tasks.hotel_tasks.*": {"queue": "hotel_processing"},
+    #     "app.tasks.hotel_tracking_tasks.*": {"queue": "hotel_tracking"},
+    #     "app.tasks.notification_tasks.*": {"queue": "notifications"},
+    #     "app.tasks.cleanup_tasks.*": {"queue": "maintenance"},
+    # },
     
     # Beat Schedule (for periodic tasks)
     beat_schedule={
