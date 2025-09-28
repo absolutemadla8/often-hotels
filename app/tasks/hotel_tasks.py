@@ -25,12 +25,25 @@ def sync_hotel_data(self) -> Dict[str, Any]:
 async def _sync_hotel_data_async(task_instance) -> Dict[str, Any]:
     """Async implementation of hotel data sync"""
     task_id = task_instance.request.id
+    tortoise_initialized = False
     
     try:
         # Initialize Tortoise if not already initialized
-        if not Tortoise._get_db(None):
-            from tortoise_config import TORTOISE_ORM
-            await Tortoise.init(config=TORTOISE_ORM)
+        from app.core.config import settings
+        from app.models.models import Hotel
+        
+        try:
+            # Check if Tortoise is properly initialized by trying to access the model's db connection
+            _ = Hotel._meta.db
+            logger.info(f"Using existing Tortoise connection for hotel sync task {task_id}")
+        except:
+            # If we can't access the db, we need to initialize
+            await Tortoise.init(
+                db_url=settings.DATABASE_URL,
+                modules={"models": ["app.models.models"]}
+            )
+            tortoise_initialized = True
+            logger.info(f"Tortoise initialized for hotel sync task {task_id}")
         
         await task_instance.update_task_status(task_id, TaskStatus.STARTED)
         
@@ -77,6 +90,11 @@ async def _sync_hotel_data_async(task_instance) -> Dict[str, Any]:
         logger.error(error_msg)
         await task_instance.update_task_status(task_id, TaskStatus.FAILURE, error_message=error_msg)
         raise
+    finally:
+        # Clean up Tortoise connection if we initialized it
+        if tortoise_initialized:
+            await Tortoise.close_connections()
+            logger.info(f"Closed Tortoise connections for hotel sync task {task_id}")
 
 
 @celery_app.task(bind=True, base=BaseTask)
@@ -88,12 +106,25 @@ def process_hotel_search(self, user_id: int, search_criteria: Dict[str, Any]) ->
 async def _process_hotel_search_async(task_instance, user_id: int, search_criteria: Dict[str, Any]) -> Dict[str, Any]:
     """Async implementation of hotel search processing"""
     task_id = task_instance.request.id
+    tortoise_initialized = False
     
     try:
         # Initialize Tortoise if not already initialized
-        if not Tortoise._get_db(None):
-            from tortoise_config import TORTOISE_ORM
-            await Tortoise.init(config=TORTOISE_ORM)
+        from app.core.config import settings
+        from app.models.models import User
+        
+        try:
+            # Check if Tortoise is properly initialized by trying to access the model's db connection
+            _ = User._meta.db
+            logger.info(f"Using existing Tortoise connection for hotel search task {task_id}")
+        except:
+            # If we can't access the db, we need to initialize
+            await Tortoise.init(
+                db_url=settings.DATABASE_URL,
+                modules={"models": ["app.models.models"]}
+            )
+            tortoise_initialized = True
+            logger.info(f"Tortoise initialized for hotel search task {task_id}")
         
         await task_instance.update_task_status(task_id, TaskStatus.STARTED)
         
@@ -145,3 +176,8 @@ async def _process_hotel_search_async(task_instance, user_id: int, search_criter
         logger.error(error_msg)
         await task_instance.update_task_status(task_id, TaskStatus.FAILURE, error_message=error_msg)
         raise
+    finally:
+        # Clean up Tortoise connection if we initialized it
+        if tortoise_initialized:
+            await Tortoise.close_connections()
+            logger.info(f"Closed Tortoise connections for hotel search task {task_id}")

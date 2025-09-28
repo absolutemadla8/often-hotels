@@ -18,7 +18,7 @@ from tortoise.transactions import in_transaction
 from app.core.hotel_tracking_config import tracking_config, get_tracking_days, get_search_criteria_defaults
 from app.models.models import (
     Destination, Hotel, UniversalPriceHistory, Country,
-    TrackableType, HotelType, HotelChain
+    TrackableType, HotelType, HotelChain, TaskStatus
 )
 from app.services.serp_service import (
     SerpApiService, SearchCriteria, PropertyResult, SerpApiResponse,
@@ -655,14 +655,16 @@ class HotelTrackingService:
                 
                 if price_created:
                     price_records_created += 1
+                    # Extract price info for logging
+                    price_info = self._extract_price_info(property_result)
                     await task_instance.log_debug(
                         task_id,
-                        f"✅ Updated price record for {hotel.name} on {checkin_date}: {property_result.extracted_price} {property_result.currency}",
+                        f"✅ Updated price record for {hotel.name} on {checkin_date}: {price_info['price']} {price_info['currency']}",
                         phase="hotel_processing",
                         metadata={
                             "hotel_name": hotel.name,
-                            "price": str(property_result.extracted_price),
-                            "currency": property_result.currency,
+                            "price": str(price_info['price']),
+                            "currency": price_info['currency'],
                             "checkin_date": checkin_date.isoformat()
                         }
                     )
@@ -971,6 +973,31 @@ class HotelTrackingService:
                 "price_records_last_24h": recent_prices,
             }
         }
+    
+    def _extract_price_info(self, property_result: PropertyResult) -> Dict[str, str]:
+        """
+        Extract price and currency information from PropertyResult for logging
+        
+        Args:
+            property_result: Property data from SerpApi
+            
+        Returns:
+            Dict with 'price' and 'currency' keys
+        """
+        if property_result.rate_per_night and property_result.rate_per_night.extracted_lowest:
+            price = property_result.rate_per_night.extracted_lowest
+            return {"price": str(price), "currency": tracking_config.DEFAULT_CURRENCY}
+        elif property_result.total_rate and property_result.total_rate.extracted_lowest:
+            price = property_result.total_rate.extracted_lowest
+            return {"price": str(price), "currency": tracking_config.DEFAULT_CURRENCY}
+        elif property_result.prices and len(property_result.prices) > 0:
+            first_price = property_result.prices[0]
+            if first_price.rate_per_night and first_price.rate_per_night.extracted_lowest:
+                price = first_price.rate_per_night.extracted_lowest
+                return {"price": str(price), "currency": tracking_config.DEFAULT_CURRENCY}
+        
+        # Fallback if no price found
+        return {"price": "N/A", "currency": tracking_config.DEFAULT_CURRENCY}
 
 
 # Factory function for dependency injection
