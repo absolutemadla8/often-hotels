@@ -17,7 +17,7 @@ from tortoise.transactions import in_transaction
 
 from app.core.hotel_tracking_config import tracking_config, get_tracking_days, get_search_criteria_defaults
 from app.models.models import (
-    Destination, Hotel, UniversalPriceHistory, Country,
+    Destination, Area, Hotel, UniversalPriceHistory, Country,
     TrackableType, HotelType, HotelChain, TaskStatus
 )
 from app.services.serp_service import (
@@ -333,24 +333,48 @@ class HotelTrackingService:
         Returns:
             Summary of destination processing
         """
+        # Check if destination has areas with tracking enabled
+        areas_with_tracking = await Area.filter(
+            destination_id=destination.id,
+            tracking=True,
+            is_active=True
+        ).all()
+        
         tracking_days = get_tracking_days(destination.numberofdaystotrack)
         start_date = datetime.now().date()
         
         hotels_discovered = 0
         price_records_created = 0
         
-        await task_instance.log_info(
-            task_id,
-            f"Processing {destination.name} for {tracking_days} days starting from {start_date}",
-            phase="destination_processing",
-            metadata={
-                "destination": destination.name,
-                "tracking_days": tracking_days,
-                "start_date": start_date.isoformat(),
-                "destination_index": destination_index,
-                "total_destinations": total_destinations
-            }
-        )
+        # Determine search strategy
+        if areas_with_tracking:
+            await task_instance.log_info(
+                task_id,
+                f"Processing {destination.name} with {len(areas_with_tracking)} tracking areas for {tracking_days} days starting from {start_date}",
+                phase="destination_processing",
+                metadata={
+                    "destination": destination.name,
+                    "areas_count": len(areas_with_tracking),
+                    "areas": [area.name for area in areas_with_tracking],
+                    "tracking_days": tracking_days,
+                    "start_date": start_date.isoformat(),
+                    "destination_index": destination_index,
+                    "total_destinations": total_destinations
+                }
+            )
+        else:
+            await task_instance.log_info(
+                task_id,
+                f"Processing {destination.name} (no areas) for {tracking_days} days starting from {start_date}",
+                phase="destination_processing",
+                metadata={
+                    "destination": destination.name,
+                    "tracking_days": tracking_days,
+                    "start_date": start_date.isoformat(),
+                    "destination_index": destination_index,
+                    "total_destinations": total_destinations
+                }
+            )
         
         # Process each day in the tracking period
         for day_offset in range(tracking_days):
@@ -358,39 +382,75 @@ class HotelTrackingService:
             checkout_date = checkin_date + timedelta(days=tracking_config.DEFAULT_STAY_DURATION_DAYS)
             
             try:
-                await task_instance.log_phase_start(
-                    task_id,
-                    "day_processing",
-                    f"Processing {destination.name} - Day {day_offset + 1}/{tracking_days} ({checkin_date})"
-                )
-                
-                # Search hotels for this date range
-                day_result = await self.search_and_update_hotels_with_progress(
-                    destination, checkin_date, checkout_date, task_instance, task_id,
-                    day_offset + 1, tracking_days
-                )
-                
-                hotels_discovered += day_result['hotels_processed']
-                price_records_created += day_result['price_records_created']
-                
-                await task_instance.log_info(
-                    task_id,
-                    f"{destination.name} - Day {day_offset + 1}/{tracking_days}: {day_result['hotels_processed']} hotels processed, {day_result['price_records_created']} price records created",
-                    phase="day_processing",
-                    metadata={
-                        "destination": destination.name,
-                        "day": day_offset + 1,
-                        "total_days": tracking_days,
-                        "checkin_date": checkin_date.isoformat(),
-                        "hotels_processed": day_result['hotels_processed'],
-                        "price_records_created": day_result['price_records_created']
-                    }
-                )
+                if areas_with_tracking:
+                    # Area-based search: Search each area separately
+                    await task_instance.log_phase_start(
+                        task_id,
+                        "day_processing",
+                        f"Processing {destination.name} areas - Day {day_offset + 1}/{tracking_days} ({checkin_date})"
+                    )
+                    
+                    for area in areas_with_tracking:
+                        await task_instance.log_info(
+                            task_id,
+                            f"Searching hotels in {area.name}, {destination.name}",
+                            phase="area_processing",
+                            metadata={"area": area.name, "destination": destination.name}
+                        )
+                        
+                        # Search hotels for this area and date range
+                        area_result = await self.search_and_update_hotels_with_progress(
+                            destination, checkin_date, checkout_date, task_instance, task_id,
+                            day_offset + 1, tracking_days, area=area
+                        )
+                        
+                        hotels_discovered += area_result['hotels_processed']
+                        price_records_created += area_result['price_records_created']
+                        
+                        await task_instance.log_info(
+                            task_id,
+                            f"{area.name} area - Day {day_offset + 1}: {area_result['hotels_processed']} hotels, {area_result['price_records_created']} price records",
+                            phase="area_processing"
+                        )
+                        
+                        # Small delay between area searches
+                        if tracking_config.API_CALL_DELAY_SECONDS > 0:
+                            await asyncio.sleep(tracking_config.API_CALL_DELAY_SECONDS / 4)
+                else:
+                    # Destination-based search: Search destination directly
+                    await task_instance.log_phase_start(
+                        task_id,
+                        "day_processing",
+                        f"Processing {destination.name} - Day {day_offset + 1}/{tracking_days} ({checkin_date})"
+                    )
+                    
+                    # Search hotels for this destination and date range
+                    day_result = await self.search_and_update_hotels_with_progress(
+                        destination, checkin_date, checkout_date, task_instance, task_id,
+                        day_offset + 1, tracking_days
+                    )
+                    
+                    hotels_discovered += day_result['hotels_processed']
+                    price_records_created += day_result['price_records_created']
+                    
+                    await task_instance.log_info(
+                        task_id,
+                        f"{destination.name} - Day {day_offset + 1}/{tracking_days}: {day_result['hotels_processed']} hotels processed, {day_result['price_records_created']} price records created",
+                        phase="day_processing",
+                        metadata={
+                            "destination": destination.name,
+                            "day": day_offset + 1,
+                            "total_days": tracking_days,
+                            "checkin_date": checkin_date.isoformat(),
+                            "hotels_processed": day_result['hotels_processed'],
+                            "price_records_created": day_result['price_records_created']
+                        }
+                    )
                 
                 await task_instance.log_phase_end(
                     task_id,
                     "day_processing",
-                    f"Completed {destination.name} - Day {day_offset + 1}/{tracking_days}"
+                    f"Completed Day {day_offset + 1}/{tracking_days} for {destination.name}"
                 )
                 
                 # Small delay between searches
@@ -496,7 +556,7 @@ class HotelTrackingService:
                     continue
                 
                 # Create or update hotel
-                hotel = await self.create_or_update_hotel(property_result, destination)
+                hotel = await self.create_or_update_hotel(property_result, destination, area)
                 hotels_processed += 1
                 
                 # Create price history record
@@ -529,7 +589,8 @@ class HotelTrackingService:
         task_instance,
         task_id: str,
         day_number: int,
-        total_days: int
+        total_days: int,
+        area: Area = None
     ) -> Dict[str, Any]:
         """
         Search hotels for a specific date range and update database with detailed progress updates
@@ -542,14 +603,25 @@ class HotelTrackingService:
             task_id: Task ID for progress tracking
             day_number: Current day number (1-based)
             total_days: Total number of days being processed
+            area: Optional area for more specific search (if None, searches destination)
             
         Returns:
             Summary of search and update operation
         """
-        # Build search criteria
+        # Build search criteria with area-aware query
         search_defaults = get_search_criteria_defaults()
+        
+        if area:
+            # Area-based search: "Area, Destination, Country"
+            search_query = f"{area.name}, {destination.name}, {destination.country.name}"
+            search_location = f"{area.name} area"
+        else:
+            # Destination-based search: "Destination, Country"
+            search_query = f"{destination.name}, {destination.country.name}"
+            search_location = destination.name
+        
         criteria = SearchCriteria(
-            query=f"{destination.name}, {destination.country.name}",
+            query=search_query,
             check_in_date=checkin_date,
             check_out_date=checkout_date,
             **search_defaults
@@ -557,10 +629,12 @@ class HotelTrackingService:
         
         await task_instance.log_info(
             task_id,
-            f"Starting hotel search for {destination.name} on {checkin_date}",
+            f"Starting hotel search for {search_location} on {checkin_date} (query: {search_query})",
             phase="hotel_search",
             metadata={
                 "destination": destination.name,
+                "area": area.name if area else None,
+                "search_query": search_query,
                 "checkin_date": checkin_date.isoformat(),
                 "checkout_date": checkout_date.isoformat(),
                 "day_number": day_number,
@@ -577,9 +651,14 @@ class HotelTrackingService:
         if not search_responses:
             await task_instance.log_warning(
                 task_id,
-                f"No search results for {destination.name} on {checkin_date}",
+                f"No search results for {search_location} on {checkin_date}",
                 phase="hotel_search",
-                metadata={"destination": destination.name, "checkin_date": checkin_date.isoformat()}
+                metadata={
+                    "destination": destination.name,
+                    "area": area.name if area else None,
+                    "search_query": search_query,
+                    "checkin_date": checkin_date.isoformat()
+                }
             )
             return {
                 "hotels_processed": 0,
@@ -645,7 +724,7 @@ class HotelTrackingService:
                     continue
                 
                 # Create or update hotel
-                hotel = await self.create_or_update_hotel(property_result, destination)
+                hotel = await self.create_or_update_hotel(property_result, destination, area)
                 hotels_processed += 1
                 
                 # Create price history record
@@ -705,7 +784,8 @@ class HotelTrackingService:
     async def create_or_update_hotel(
         self, 
         property_result: PropertyResult, 
-        destination: Destination
+        destination: Destination,
+        area: Area = None
     ) -> Hotel:
         """
         Create or update hotel record from PropertyResult
@@ -713,6 +793,7 @@ class HotelTrackingService:
         Args:
             property_result: Hotel data from SerpApi
             destination: Destination the hotel belongs to
+            area: Optional area the hotel belongs to
             
         Returns:
             Hotel instance
@@ -734,6 +815,7 @@ class HotelTrackingService:
             "short_description": property_result.description[:500] if property_result.description else None,
             "country": destination.country,
             "destination": destination,
+            "area": area,
             "hotel_type": HotelType.HOTEL,
             "hotel_chain": HotelChain.INDEPENDENT,
             "star_rating": property_result.extracted_hotel_class,

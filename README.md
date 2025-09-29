@@ -328,13 +328,20 @@ POSTGRES_PASSWORD=secure-production-password
 5. Run the test suite
 6. Submit a pull request
 
-## 📚 API Documentation
+## 📚 Documentation
 
-Once the application is running, you can access:
+### Quick Access
+- **Interactive API docs**: https://localhost/docs (when running)
+- **Alternative docs**: https://localhost/redoc (when running)
+- **OpenAPI spec**: https://localhost/api/v1/openapi.json (when running)
 
-- **Interactive API docs**: https://localhost/docs
-- **Alternative docs**: https://localhost/redoc
-- **OpenAPI spec**: https://localhost/api/v1/openapi.json
+### Comprehensive Guides
+- **[📖 Complete Documentation](./markdown_guide/README.md)** - All documentation in one place
+- **[🔍 Location Search API](./markdown_guide/location-search-api.md)** - Unified search with caching
+- **[🚀 API Guide](./markdown_guide/API_GUIDE.md)** - Complete API reference
+- **[🔗 TravClan Integration](./markdown_guide/TRAVCLAN_API_INTEGRATION.md)** - External API integration
+- **[⚡ Celery Background Tasks](./markdown_guide/CELERY_DEEP_DIVE.md)** - Task processing guide
+- **[🏗️ System Architecture](./markdown_guide/explanation.md)** - Overall system design
 
 ## 🐛 Troubleshooting
 

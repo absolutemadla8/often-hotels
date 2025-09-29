@@ -1,71 +1,166 @@
-from typing import Dict, Any
-from fastapi import APIRouter, Query, Depends, HTTPException
+"""
+Location search API endpoints
 
-# No dependencies needed for location search
-from app.services.travclan_api_service import travclan_api_service
+Provides unified search across destinations and areas with pagination,
+filtering, and detailed location information.
+"""
 
+from typing import Optional, Literal
+from fastapi import APIRouter, Query, Depends, HTTPException, status
+import logging
+
+from app.services.location_search_service import get_location_search_service, LocationSearchService
+from app.schemas.location import LocationSearchResponse
+
+logger = logging.getLogger(__name__)
 router = APIRouter()
 
 
-@router.get("/search")
+@router.get("/search", response_model=LocationSearchResponse)
 async def search_locations(
-    search_keyword: str = Query(..., min_length=2, description="Search keyword for locations"),
-) -> Dict[str, Any]:
+    q: str = Query(..., min_length=2, max_length=100, description="Search keyword for locations"),
+    page: int = Query(1, ge=1, le=1000, description="Page number"),
+    per_page: int = Query(20, ge=1, le=100, description="Results per page"),
+    type: Optional[Literal["destination", "area"]] = Query(None, description="Filter by location type"),
+    country_id: Optional[int] = Query(None, ge=1, description="Filter by country ID"),
+    tracking_only: bool = Query(False, description="Show only tracking-enabled locations"),
+    search_service: LocationSearchService = Depends(get_location_search_service)
+) -> LocationSearchResponse:
     """
-    Search for hotel locations and destinations
+    Search for locations (destinations and areas) with pagination
     
-    Search for destinations, cities, and clusters for hotel bookings
+    **Search Features:**
+    - Searches across both destinations and areas
+    - Fuzzy matching on name, display_name, and description
+    - Relevance-based sorting (exact match → starts with → contains)
+    - Proper pagination with metadata
+    - Type filtering (destination/area)
+    - Country and tracking status filtering
+    
+    **Response includes:**
+    - Clear type indication ("destination" or "area")
+    - Complete location details with coordinates
+    - Parent destination info for areas
+    - Country information
+    - Areas count for destinations
+    - Pagination metadata
     """
-    if len(search_keyword.strip()) < 2:
-        raise HTTPException(status_code=400, detail="Search keyword must be at least 2 characters")
-    
     try:
-        # Use async context manager for the API service
-        async with travclan_api_service:
-            response = await travclan_api_service.search_locations(search_keyword.strip())
+        # Validate parameters
+        search_keyword = q.strip()
+        if len(search_keyword) < 2:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Search keyword must be at least 2 characters"
+            )
         
-        # Process API results
-        api_results = process_api_results(response.get('results', []))
+        logger.info(f"Location search request: '{search_keyword}', page={page}, per_page={per_page}, type={type}")
         
-        return {
-            "status": "success",
-            "data": api_results
-        }
-
+        # Perform search
+        results, pagination, filters = await search_service.search_locations(
+            search_keyword=search_keyword,
+            page=page,
+            per_page=per_page,
+            location_type=type,
+            country_id=country_id,
+            tracking_only=tracking_only
+        )
+        
+        # Build response
+        response = LocationSearchResponse(
+            success=True,
+            results=results,
+            pagination=pagination,
+            filters_applied=filters,
+            message=f"Found {pagination.total} locations matching '{search_keyword}'"
+        )
+        
+        logger.info(f"Location search completed: {len(results)} results returned")
+        return response
+        
     except HTTPException:
         raise
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Location search failed: {str(e)}")
+        logger.error(f"Location search failed: {str(e)}", exc_info=True)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Location search failed: {str(e)}"
+        )
 
 
-def process_api_results(results) -> list:
+@router.get("/destinations", response_model=LocationSearchResponse)
+async def search_destinations_only(
+    q: str = Query(..., min_length=2, max_length=100, description="Search keyword for destinations"),
+    page: int = Query(1, ge=1, le=1000, description="Page number"),
+    per_page: int = Query(20, ge=1, le=100, description="Results per page"),
+    country_id: Optional[int] = Query(None, ge=1, description="Filter by country ID"),
+    tracking_only: bool = Query(False, description="Show only tracking-enabled destinations"),
+    search_service: LocationSearchService = Depends(get_location_search_service)
+) -> LocationSearchResponse:
     """
-    Process the API search results and format them
+    Search destinations only
+    
+    Convenience endpoint for searching only destinations (not areas).
+    Same functionality as the main search endpoint but with type="destination" pre-applied.
     """
-    processed_results = []
+    return await search_locations(
+        q=q,
+        page=page,
+        per_page=per_page,
+        type="destination",
+        country_id=country_id,
+        tracking_only=tracking_only,
+        search_service=search_service
+    )
+
+
+@router.get("/areas", response_model=LocationSearchResponse)
+async def search_areas_only(
+    q: str = Query(..., min_length=2, max_length=100, description="Search keyword for areas"),
+    page: int = Query(1, ge=1, le=1000, description="Page number"),
+    per_page: int = Query(20, ge=1, le=100, description="Results per page"),
+    country_id: Optional[int] = Query(None, ge=1, description="Filter by country ID"),
+    tracking_only: bool = Query(False, description="Show only tracking-enabled areas"),
+    search_service: LocationSearchService = Depends(get_location_search_service)
+) -> LocationSearchResponse:
+    """
+    Search areas only
     
-    for result in results:
-        # Remove travclanScore if present
-        clean_result = {k: v for k, v in result.items() if k != 'travclanScore'}
-        
-        # For hotel type, use referenceId as the id if available
-        result_id = result.get('id')
-        if (result.get('type', '').upper() == 'HOTEL' and 
-            result.get('referenceId') and result.get('referenceId') > 0):
-            result_id = result.get('referenceId')
-        
-        processed_result = {
-            'id': result_id,
-            'type': result.get('type'),
-            'name': result.get('name'),
-            'city': result.get('city'),
-            'state': result.get('state'),
-            'country': result.get('country'),
-            'coordinates': result.get('coordinates'),
-            'fullName': result.get('fullName'),
-            'source': 'api'
-        }
-        
-        processed_results.append(processed_result)
+    Convenience endpoint for searching only areas (not destinations).
+    Same functionality as the main search endpoint but with type="area" pre-applied.
+    """
+    return await search_locations(
+        q=q,
+        page=page,
+        per_page=per_page,
+        type="area",
+        country_id=country_id,
+        tracking_only=tracking_only,
+        search_service=search_service
+    )
+
+
+@router.get("/tracking", response_model=LocationSearchResponse)
+async def search_tracking_locations(
+    q: str = Query(..., min_length=2, max_length=100, description="Search keyword for tracking locations"),
+    page: int = Query(1, ge=1, le=1000, description="Page number"),
+    per_page: int = Query(20, ge=1, le=100, description="Results per page"),
+    type: Optional[Literal["destination", "area"]] = Query(None, description="Filter by location type"),
+    country_id: Optional[int] = Query(None, ge=1, description="Filter by country ID"),
+    search_service: LocationSearchService = Depends(get_location_search_service)
+) -> LocationSearchResponse:
+    """
+    Search tracking-enabled locations only
     
-    return processed_results
+    Convenience endpoint for searching only locations that have tracking enabled.
+    Useful for admin interfaces that need to show only trackable locations.
+    """
+    return await search_locations(
+        q=q,
+        page=page,
+        per_page=per_page,
+        type=type,
+        country_id=country_id,
+        tracking_only=True,
+        search_service=search_service
+    )

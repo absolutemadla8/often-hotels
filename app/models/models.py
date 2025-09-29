@@ -353,6 +353,7 @@ class Area(Model):
     google_place_id = fields.CharField(max_length=255, null=True)
     is_active = fields.BooleanField(default=True)
     is_popular = fields.BooleanField(default=False)
+    tracking = fields.BooleanField(default=False)
     priority_score = fields.IntField(default=0)
     slug = fields.CharField(max_length=100, null=True)
     meta_description = fields.TextField(null=True)

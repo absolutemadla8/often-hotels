@@ -18,6 +18,7 @@ from app.core.security_middleware import (
     TrustedHostMiddleware,
 )
 from app.schemas.response import HealthResponse
+from app.services.cache_service import get_cache_service, close_cache_service
 # Removed broken admin imports
 
 
@@ -63,6 +64,13 @@ async def lifespan(app: FastAPI):
 
     # Admin functionality disabled - use /docs for API testing
 
+    # Initialize cache service
+    try:
+        await get_cache_service()
+        print("Cache service initialized successfully")
+    except Exception as e:
+        print(f"Warning: Cache service initialization failed: {e}")
+
     # Database initialization would go here
     # await init_db()
 
@@ -72,7 +80,8 @@ async def lifespan(app: FastAPI):
     yield
 
     # Shutdown
-    # Close database connections, etc.
+    await close_cache_service()
+    print("Cache service closed")
     pass
 
 
