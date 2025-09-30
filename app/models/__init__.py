@@ -50,6 +50,20 @@ from .models import (
     TrackerStatus,
     TrackerFrequency,
     AlertTrigger,
+    
+    # Task system
+    Task,
+    TaskLog,
+    TaskStatus,
+    LogLevel,
+    
+    # Itinerary system
+    Itinerary,
+    ItineraryDestination,
+    ItineraryHotelAssignment,
+    ItinerarySearchRequest,
+    SearchType,
+    ItineraryStatus,
 )
 
 __all__ = [
@@ -103,4 +117,18 @@ __all__ = [
     "TrackerStatus",
     "TrackerFrequency",
     "AlertTrigger",
+    
+    # Task system
+    "Task",
+    "TaskLog",
+    "TaskStatus",
+    "LogLevel",
+    
+    # Itinerary system
+    "Itinerary",
+    "ItineraryDestination",
+    "ItineraryHotelAssignment",
+    "ItinerarySearchRequest",
+    "SearchType",
+    "ItineraryStatus",
 ]

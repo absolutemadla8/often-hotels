@@ -794,6 +794,13 @@ class UniversalPriceHistory(Model):
     destination_country = fields.ForeignKeyField("models.Country", related_name="destination_price_history", on_delete=fields.SET_NULL, null=True)
     destination_destination = fields.ForeignKeyField("models.Destination", related_name="destination_price_history", on_delete=fields.SET_NULL, null=True)
     raw_api_response = fields.JSONField(null=True)
+    
+    # Itinerary context fields
+    itinerary_request_id = fields.CharField(max_length=64, null=True)  # Link to search request hash
+    destination_order = fields.IntField(null=True)  # Position in itinerary (0-based)
+    nights_context = fields.IntField(null=True)  # Duration context for this destination
+    itinerary_total_nights = fields.IntField(null=True)  # Total trip duration
+    
     recorded_at = fields.DatetimeField(auto_now_add=True)
     created_at = fields.DatetimeField(auto_now_add=True)
     updated_at = fields.DatetimeField(auto_now=True)
@@ -1068,3 +1075,182 @@ class TaskLog(Model):
     
     def __str__(self):
         return f"{self.level} - {self.message[:50]}..."
+
+
+# Itinerary Models
+class SearchType(str, Enum):
+    NORMAL = "normal"
+    RANGES = "ranges"
+    FIXED_DATES = "fixed_dates"
+    ALL = "all"
+
+
+class ItineraryStatus(str, Enum):
+    PENDING = "pending"
+    OPTIMIZING = "optimizing"
+    COMPLETED = "completed"
+    FAILED = "failed"
+
+
+class Itinerary(Model):
+    """Main itinerary container with optimization results"""
+    id = fields.IntField(pk=True)
+    user = fields.ForeignKeyField("models.User", related_name="itineraries", on_delete=fields.CASCADE)
+    
+    # Search configuration
+    custom_search = fields.BooleanField(default=False)
+    search_types = fields.JSONField()  # List of SearchType values
+    suggest_best_order = fields.BooleanField(default=True)
+    
+    # Date constraints
+    global_start_date = fields.DateField()
+    global_end_date = fields.DateField()
+    date_ranges = fields.JSONField(null=True)  # For ranges search
+    fixed_dates = fields.JSONField(null=True)  # For fixed_dates search
+    
+    # Guest configuration
+    adults = fields.IntField(default=1)
+    children = fields.IntField(default=0)
+    child_ages = fields.JSONField(null=True)
+    
+    # Optimization results
+    total_cost = fields.DecimalField(max_digits=12, decimal_places=2, null=True)
+    currency = fields.CharField(max_length=3, default="USD")
+    optimization_score = fields.FloatField(null=True)  # Quality metric
+    
+    # Processing metadata
+    status = fields.CharEnumField(ItineraryStatus, default=ItineraryStatus.PENDING)
+    optimization_time_ms = fields.IntField(null=True)
+    alternatives_generated = fields.IntField(default=0)
+    
+    # Search context
+    top_k = fields.IntField(default=3)  # Number of results per search type
+    request_hash = fields.CharField(max_length=64, null=True)  # For caching
+    
+    # Timestamps
+    created_at = fields.DatetimeField(auto_now_add=True)
+    updated_at = fields.DatetimeField(auto_now=True)
+    
+    class Meta:
+        table = "itineraries"
+        
+    def __str__(self):
+        return f"Itinerary {self.id} - {self.status} - {self.total_cost} {self.currency}"
+
+
+class ItineraryDestination(Model):
+    """Destination stops within an itinerary with ordering and duration"""
+    id = fields.IntField(pk=True)
+    itinerary = fields.ForeignKeyField("models.Itinerary", related_name="destinations", on_delete=fields.CASCADE)
+    destination = fields.ForeignKeyField("models.Destination", related_name="itinerary_stops", on_delete=fields.CASCADE)
+    area = fields.ForeignKeyField("models.Area", related_name="itinerary_stops", on_delete=fields.SET_NULL, null=True)
+    
+    # Ordering and duration
+    order = fields.IntField()  # 0-based position in itinerary
+    nights = fields.IntField()  # Required nights at this destination
+    
+    # Actual assigned dates (after optimization)
+    start_date = fields.DateField(null=True)
+    end_date = fields.DateField(null=True)
+    
+    # Cost summary for this destination
+    total_cost = fields.DecimalField(max_digits=12, decimal_places=2, null=True)
+    currency = fields.CharField(max_length=3, default="USD")
+    
+    # Hotel assignment summary
+    hotels_count = fields.IntField(default=0)
+    single_hotel = fields.BooleanField(default=False)  # True if single hotel covers all nights
+    
+    # Metadata
+    created_at = fields.DatetimeField(auto_now_add=True)
+    updated_at = fields.DatetimeField(auto_now=True)
+    
+    class Meta:
+        table = "itinerary_destinations"
+        unique_together = (("itinerary", "order"),)
+        ordering = ["order"]
+        
+    def __str__(self):
+        return f"Destination {self.order}: {self.destination.name} - {self.nights} nights"
+
+
+class ItineraryHotelAssignment(Model):
+    """Hotel assignments for specific dates within a destination"""
+    id = fields.IntField(pk=True)
+    itinerary_destination = fields.ForeignKeyField(
+        "models.ItineraryDestination", 
+        related_name="hotel_assignments", 
+        on_delete=fields.CASCADE
+    )
+    hotel = fields.ForeignKeyField("models.Hotel", related_name="itinerary_assignments", on_delete=fields.CASCADE)
+    
+    # Date and pricing
+    assignment_date = fields.DateField()  # Specific date for this assignment
+    price = fields.DecimalField(max_digits=12, decimal_places=2)
+    base_price = fields.DecimalField(max_digits=12, decimal_places=2, null=True)
+    currency = fields.CharField(max_length=3, default="USD")
+    
+    # Booking details
+    room_type = fields.CharField(max_length=100, null=True)
+    rate_plan = fields.CharField(max_length=100, null=True)
+    guest_count = fields.IntField(default=1)
+    
+    # Optimization metadata
+    selection_reason = fields.CharField(max_length=50, null=True)  # 'single_hotel', 'cheapest_day', etc.
+    alternative_count = fields.IntField(default=0)  # Number of alternatives considered
+    
+    # External reference
+    external_rate_id = fields.CharField(max_length=255, null=True)
+    partner_name = fields.CharField(max_length=100, null=True)
+    
+    # Timestamps
+    created_at = fields.DatetimeField(auto_now_add=True)
+    updated_at = fields.DatetimeField(auto_now=True)
+    
+    class Meta:
+        table = "itinerary_hotel_assignments"
+        unique_together = (("itinerary_destination", "assignment_date"),)
+        ordering = ["assignment_date"]
+        
+    def __str__(self):
+        return f"{self.hotel.name} on {self.assignment_date} - {self.price} {self.currency}"
+
+
+class ItinerarySearchRequest(Model):
+    """Log of search requests for caching and analytics"""
+    id = fields.IntField(pk=True)
+    user = fields.ForeignKeyField("models.User", related_name="itinerary_requests", on_delete=fields.CASCADE, null=True)
+    
+    # Request fingerprint
+    request_hash = fields.CharField(max_length=64, unique=True)
+    
+    # Request parameters
+    custom_search = fields.BooleanField(default=False)
+    search_types = fields.JSONField()
+    destinations = fields.JSONField()  # Destination IDs and nights
+    global_date_range = fields.JSONField()
+    date_ranges = fields.JSONField(null=True)
+    fixed_dates = fields.JSONField(null=True)
+    guest_config = fields.JSONField()  # Adults, children, ages
+    
+    # Results summary
+    itineraries_generated = fields.IntField(default=0)
+    best_cost = fields.DecimalField(max_digits=12, decimal_places=2, null=True)
+    currency = fields.CharField(max_length=3, default="USD")
+    
+    # Performance metrics
+    processing_time_ms = fields.IntField(null=True)
+    cache_hit = fields.BooleanField(default=False)
+    
+    # Usage tracking
+    access_count = fields.IntField(default=1)
+    last_accessed = fields.DatetimeField(auto_now=True)
+    
+    # Timestamps
+    created_at = fields.DatetimeField(auto_now_add=True)
+    
+    class Meta:
+        table = "itinerary_search_requests"
+        
+    def __str__(self):
+        return f"Search {self.request_hash[:8]} - {self.search_types}"
