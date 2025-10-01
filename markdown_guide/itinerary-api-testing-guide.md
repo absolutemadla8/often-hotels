@@ -4,7 +4,14 @@ A comprehensive testing guide for the multi-destination itinerary optimization s
 
 ## 🎯 Overview
 
-This guide helps you test the new itinerary optimization API that finds the best hotel prices across multiple destinations with different search strategies. The system optimizes consecutive destination visits while minimizing accommodation costs.
+This guide helps you test the optimized itinerary API that finds the best hotel prices across multiple destinations with different search strategies. The system now uses a **clean month-grouped structure** with `monthly_options` and supports anonymous user access with intelligent data filtering.
+
+### 🆕 Key Improvements
+- **Clean Month-Grouped Structure**: Replaced legacy start_month/mid_month/end_month with unified `monthly_options`
+- **Anonymous User Support**: Smart filtering shows single nearest option for unauthenticated users
+- **Enhanced Price Tracking**: Fixed date logic with proper price_date vs search_date handling
+- **Improved Hotel Search**: Better star rating extraction and comprehensive debug logging
+- **Optimized Performance**: Fixed ORM queries and added intelligent caching
 
 ### Current Test Destinations
 - **Bali (Province)** 🏝️
@@ -17,8 +24,9 @@ This guide helps you test the new itinerary optimization API that finds the best
 
 ## 🚀 Quick Start Testing
 
-### 1. Basic Normal Search (Start/Mid/End Month)
+### 1. Basic Normal Search (Monthly Options - Clean Structure)
 ```bash
+# Authenticated user - gets all monthly options
 curl -X POST "http://localhost:8000/api/v1/itineraries/optimize" \
   -H "Authorization: Bearer YOUR_TOKEN" \
   -H "Content-Type: application/json" \
@@ -44,45 +52,144 @@ curl -X POST "http://localhost:8000/api/v1/itineraries/optimize" \
       "adults": 2,
       "children": 0
     },
-    "currency": "USD"
+    "currency": "INR"
   }'
 ```
 
-**Expected Response:**
+### 1.1 Anonymous User Test (Single Nearest Option)
+```bash
+# Anonymous user - gets only single nearest option
+curl -X POST "http://localhost:8000/api/v1/itineraries/optimize" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "custom": false,
+    "destinations": [
+      {
+        "destination_id": 5,
+        "area_id": 1,
+        "nights": 3
+      }
+    ],
+    "global_date_range": {
+      "start": "2025-12-01",
+      "end": "2025-12-31"
+    },
+    "guests": {
+      "adults": 2,
+      "children": 0
+    },
+    "currency": "INR"
+  }'
+```
+
+**Expected Response (Authenticated User):**
 ```json
 {
   "success": true,
   "request_hash": "a1b2c3d4e5f6...",
   "normal": {
-    "start_month": {
-      "search_type": "normal",
-      "label": "start_month",
-      "destinations": [
-        {
-          "destination_id": 5,
-          "destination_name": "Bali",
-          "area_id": 1,
-          "area_name": "Ubud",
-          "nights": 3,
-          "start_date": "2025-12-01",
-          "end_date": "2025-12-03",
-          "total_cost": 225.00,
-          "single_hotel": true,
-          "hotel_assignments": [...]
-        }
-      ],
-      "total_cost": 450.00,
-      "currency": "USD",
-      "total_nights": 5
-    },
-    "mid_month": {...},
-    "end_month": {...}
+    "monthly_options": [
+      {
+        "search_type": "normal",
+        "label": "December 2025",
+        "start_month": "2025-12-01",
+        "destinations": [
+          {
+            "destination_id": 5,
+            "destination_name": "Bali",
+            "area_id": 1,
+            "area_name": "Ubud",
+            "nights": 3,
+            "start_date": "2025-12-01",
+            "end_date": "2025-12-03",
+            "total_cost": 15750.00,
+            "currency": "INR",
+            "single_hotel": true,
+            "hotel_assignments": [...]
+          }
+        ],
+        "total_cost": 31500.00,
+        "currency": "INR",
+        "total_nights": 5
+      },
+      {
+        "search_type": "normal", 
+        "label": "December 2025 Mid",
+        "start_month": "2025-12-15",
+        "destinations": [...],
+        "total_cost": 28800.00,
+        "currency": "INR"
+      },
+      {
+        "search_type": "normal",
+        "label": "December 2025 End", 
+        "start_month": "2025-12-25",
+        "destinations": [...],
+        "total_cost": 33200.00,
+        "currency": "INR"
+      }
+    ]
   },
-  "best_itinerary": {...},
+  "best_itinerary": {
+    "search_type": "normal",
+    "label": "December 2025 Mid",
+    "total_cost": 28800.00,
+    "currency": "INR"
+  },
   "metadata": {
     "processing_time_ms": 1250,
     "cache_hit": false,
-    "alternatives_generated": 12
+    "alternatives_generated": 12,
+    "user_authenticated": true
+  }
+}
+```
+
+**Expected Response (Anonymous User):**
+```json
+{
+  "success": true,
+  "request_hash": "a1b2c3d4e5f6...",
+  "normal": {
+    "monthly_options": [
+      {
+        "search_type": "normal",
+        "label": "December 2025 Mid",
+        "start_month": "2025-12-15",
+        "destinations": [
+          {
+            "destination_id": 5,
+            "destination_name": "Bali",
+            "area_id": 1,
+            "area_name": "Ubud",
+            "nights": 3,
+            "start_date": "2025-12-15",
+            "end_date": "2025-12-17",
+            "total_cost": 14400.00,
+            "currency": "INR",
+            "single_hotel": true,
+            "hotel_assignments": [...]
+          }
+        ],
+        "total_cost": 14400.00,
+        "currency": "INR",
+        "total_nights": 3,
+        "message": "Sign in to see all available options"
+      }
+    ]
+  },
+  "best_itinerary": {
+    "search_type": "normal",
+    "label": "December 2025 Mid", 
+    "total_cost": 14400.00,
+    "currency": "INR"
+  },
+  "metadata": {
+    "processing_time_ms": 850,
+    "cache_hit": false,
+    "alternatives_generated": 1,
+    "user_authenticated": false,
+    "nearest_option_shown": true
   }
 }
 ```
@@ -126,7 +233,7 @@ curl -X POST "http://localhost:8000/api/v1/itineraries/optimize" \
       "children": 1,
       "child_ages": [8]
     },
-    "currency": "USD",
+    "currency": "INR",
     "top_k": 3
   }'
 ```
@@ -167,7 +274,7 @@ curl -X POST "http://localhost:8000/api/v1/itineraries/optimize" \
     ],
     "fixed_dates": ["2025-12-05", "2025-12-20"],
     "guests": {"adults": 2},
-    "currency": "USD",
+    "currency": "INR",
     "top_k": 2
   }'
 ```
@@ -201,7 +308,7 @@ curl -X POST "http://localhost:8000/api/v1/itineraries/optimize" \
       "children": 2,
       "child_ages": [10, 12]
     },
-    "currency": "USD"
+    "currency": "INR"
   }'
 ```
 
@@ -227,7 +334,7 @@ curl -X POST "http://localhost:8000/api/v1/itineraries/optimize" \
     },
     "fixed_dates": ["2025-12-16", "2025-12-20"],
     "guests": {"adults": 1},
-    "currency": "USD"
+    "currency": "INR"
   }'
 ```
 
@@ -259,7 +366,7 @@ curl -X POST "http://localhost:8000/api/v1/itineraries/optimize" \
       {"start": "2025-12-22", "end": "2025-12-28"}
     ],
     "guests": {"adults": 2},
-    "currency": "USD",
+    "currency": "INR",
     "top_k": 5
   }'
 ```
@@ -288,7 +395,7 @@ curl -X POST "http://localhost:8000/api/v1/itineraries/compare" \
     ],
     "fixed_dates": ["2025-12-05", "2025-12-15"],
     "guests": {"adults": 2},
-    "currency": "USD"
+    "currency": "INR"
   }'
 ```
 
@@ -314,15 +421,17 @@ curl -X DELETE "http://localhost:8000/api/v1/itineraries/cache/a1b2c3d4e5f6..." 
 
 ## 🎯 Expected Response Patterns
 
-### Successful Normal Search Response
+### Successful Normal Search Response (New Clean Structure)
 ```json
 {
   "success": true,
   "request_hash": "sha256_hash_here",
   "normal": {
-    "start_month": {
-      "search_type": "normal",
-      "label": "start_month",
+    "monthly_options": [
+      {
+        "search_type": "normal",
+        "label": "December 2025",
+        "start_month": "2025-12-01",
       "destinations": [
         {
           "destination_id": 5,
@@ -333,8 +442,8 @@ curl -X DELETE "http://localhost:8000/api/v1/itineraries/cache/a1b2c3d4e5f6..." 
           "nights": 3,
           "start_date": "2025-12-01",
           "end_date": "2025-12-03",
-          "total_cost": 225.00,
-          "currency": "USD",
+          "total_cost": 15750.00,
+          "currency": "INR",
           "hotels_count": 1,
           "single_hotel": true,
           "hotel_assignments": [
@@ -342,59 +451,76 @@ curl -X DELETE "http://localhost:8000/api/v1/itineraries/cache/a1b2c3d4e5f6..." 
               "hotel_id": 15,
               "hotel_name": "Ubud Luxury Resort",
               "assignment_date": "2025-12-01",
-              "price": 75.00,
-              "currency": "USD",
+              "price": 5250.00,
+              "currency": "INR",
               "selection_reason": "single_hotel"
             },
             {
               "hotel_id": 15,
               "hotel_name": "Ubud Luxury Resort", 
               "assignment_date": "2025-12-02",
-              "price": 75.00,
-              "currency": "USD",
+              "price": 5250.00,
+              "currency": "INR",
               "selection_reason": "single_hotel"
             },
             {
               "hotel_id": 15,
               "hotel_name": "Ubud Luxury Resort",
               "assignment_date": "2025-12-03", 
-              "price": 75.00,
-              "currency": "USD",
+              "price": 5250.00,
+              "currency": "INR",
               "selection_reason": "single_hotel"
             }
           ]
         }
       ],
-      "total_cost": 450.00,
-      "currency": "USD",
-      "total_nights": 5,
-      "start_date": "2025-12-01",
-      "end_date": "2025-12-05",
-      "single_hotel_destinations": 2
-    },
-    "mid_month": { /* Similar structure */ },
-    "end_month": { /* Similar structure */ }
+        "total_cost": 15750.00,
+        "currency": "INR",
+        "total_nights": 3,
+        "start_date": "2025-12-01",
+        "end_date": "2025-12-03",
+        "single_hotel_destinations": 1
+      },
+      {
+        "search_type": "normal",
+        "label": "December 2025 Mid",
+        "start_month": "2025-12-15",
+        "destinations": [...],
+        "total_cost": 14400.00,
+        "currency": "INR"
+      },
+      {
+        "search_type": "normal",
+        "label": "December 2025 End",
+        "start_month": "2025-12-25",
+        "destinations": [...],
+        "total_cost": 16800.00,
+        "currency": "INR"
+      }
+    ]
   },
   "best_itinerary": {
     "search_type": "normal",
-    "label": "start_month",
-    "total_cost": 450.00,
-    "currency": "USD"
+    "label": "December 2025 Mid",
+    "total_cost": 14400.00,
+    "currency": "INR"
   },
   "metadata": {
     "processing_time_ms": 1250,
     "cache_hit": false,
     "hotels_searched": 104,
     "alternatives_generated": 15,
-    "best_cost_found": 450.00
+    "best_cost_found": 14400.00,
+    "user_authenticated": true,
+    "clean_structure_used": true
   },
   "filters_applied": {
     "search_types": ["normal"],
     "custom": false,
-    "currency": "USD",
+    "currency": "INR",
     "guests": {"adults": 2, "children": 0}
   },
-  "message": "Found 3 itinerary options"
+  "message": "Found 3 monthly itinerary options"
 }
 ```
 
@@ -410,7 +536,7 @@ curl -X DELETE "http://localhost:8000/api/v1/itineraries/cache/a1b2c3d4e5f6..." 
         "search_type": "ranges",
         "label": "range_optimized",
         "total_cost": 420.00,
-        "currency": "USD",
+        "currency": "INR",
         "date_context": {
           "range_start": "2025-12-01",
           "range_end": "2025-12-15"
@@ -424,7 +550,7 @@ curl -X DELETE "http://localhost:8000/api/v1/itineraries/cache/a1b2c3d4e5f6..." 
         "search_type": "fixed_dates", 
         "label": "fixed_date",
         "total_cost": 480.00,
-        "currency": "USD",
+        "currency": "INR",
         "date_context": {
           "fixed_start_date": "2025-12-05"
         }
@@ -474,7 +600,7 @@ curl -X DELETE "http://localhost:8000/api/v1/itineraries/cache/a1b2c3d4e5f6..." 
       "search_type": "ranges",
       "label": "range_optimized",
       "total_cost": 420.00,
-      "currency": "USD",
+      "currency": "INR",
       "start_date": "2025-12-03",
       "end_date": "2025-12-07"
     },
@@ -548,11 +674,19 @@ curl -X DELETE "http://localhost:8000/api/v1/itineraries/cache/a1b2c3d4e5f6..." 
 ## 🧪 Testing Checklist
 
 ### Basic Functionality Tests
-- [ ] Normal search (custom=false)
+- [ ] Normal search (custom=false) with monthly_options structure
 - [ ] Single destination optimization
 - [ ] Multi-destination consecutive visits
 - [ ] Date constraint validation
 - [ ] Guest configuration validation
+
+### New Structure & Authentication Tests
+- [ ] Clean monthly_options structure (no legacy fields)
+- [ ] Authenticated user gets all monthly options
+- [ ] Anonymous user gets single nearest option only
+- [ ] Anonymous user sees "Sign in to see all options" message
+- [ ] INR currency support and proper pricing display
+- [ ] User authentication state in metadata
 
 ### Advanced Search Mode Tests  
 - [ ] Ranges search with multiple ranges
@@ -608,11 +742,20 @@ curl -X DELETE "http://localhost:8000/api/v1/itineraries/cache/a1b2c3d4e5f6..." 
 ## 🐛 Common Issues & Solutions
 
 ### Issue: "No hotel solutions found"
-**Cause:** No price data for requested dates/destinations
+**Cause:** No price data for requested dates/destinations  
 **Solution:** 
 1. Verify destination has tracking enabled
 2. Check if background hotel search jobs are running
 3. Ensure dates are within data collection range (next 60 days)
+4. Check hotel tracking logs with 🔍 emoji markers for detailed debugging
+
+### Issue: "Anonymous user not getting single nearest option"
+**Cause:** Data filtering logic not working correctly
+**Solution:**
+1. Check `user_authenticated: false` in metadata
+2. Verify `nearest_option_shown: true` in metadata
+3. Ensure only one option in `monthly_options` array
+4. Look for "Sign in to see all options" message
 
 ### Issue: "Total nights exceeds date range"
 **Cause:** Mathematical constraint violation
@@ -648,6 +791,22 @@ curl -X DELETE "http://localhost:8000/api/v1/itineraries/cache/a1b2c3d4e5f6..." 
 {"destinations": [{"nights": 3, "destination_id": 5}]}
 ```
 
+### Issue: "Old legacy structure in response"
+**Cause:** Using outdated API or legacy code path
+**Solution:**
+1. Check for `clean_structure_used: true` in metadata
+2. Verify response has `monthly_options` array instead of `start_month`, `mid_month`, `end_month`
+3. Update API client to handle new structure
+4. Look for deprecation warnings in response
+
+### Issue: "Price tracking dates are wrong"
+**Cause:** Date logic confusion between price_date and search_date
+**Solution:**
+1. `price_date` = today (when we searched)
+2. `search_date` = travel check-in date
+3. `search_end_date` = travel check-out date
+4. Check hotel tracking service logs for date assignment verification
+
 ---
 
 ## 🔄 Next Steps
@@ -674,4 +833,37 @@ After setting up hotel data with background jobs:
    - Optimize database queries
    - Tune cache settings
 
-Ready to start testing the optimized itinerary system! 🚀
+---
+
+## 🆕 Recent Updates & New Features
+
+### Clean Month-Grouped Structure ✅
+- **Old**: Separate `start_month`, `mid_month`, `end_month` fields 
+- **New**: Unified `monthly_options` array with consistent structure
+- **Benefit**: Cleaner API, easier frontend integration, no data duplication
+
+### Anonymous User Support ✅  
+- **Feature**: Smart data filtering for unauthenticated users
+- **Behavior**: Shows single nearest option instead of all options
+- **Message**: "Sign in to see all available options"
+- **Metadata**: `user_authenticated: false`, `nearest_option_shown: true`
+
+### Enhanced Price Tracking ✅
+- **Fixed**: Date logic confusion between price_date and search_date
+- **Improved**: Hotel star rating extraction with fallback parsing  
+- **Added**: Comprehensive debug logging with 🔍 emoji markers
+- **Optimized**: Fixed Tortoise ORM queries with proper `.all()` calls
+
+### Currency & Pricing Updates ✅
+- **Default**: INR currency support (replaces USD in examples)
+- **Realistic**: Updated pricing examples to match Indian market
+- **Flexible**: Maintains multi-currency support
+
+### Performance Improvements ✅
+- **Caching**: Enhanced request caching with proper hash generation
+- **Queries**: Optimized database queries for better response times
+- **Logging**: Improved debugging with structured log messages
+
+---
+
+Ready to start testing the optimized itinerary system with clean structure and enhanced features! 🚀
