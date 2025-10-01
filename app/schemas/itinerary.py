@@ -183,6 +183,7 @@ class SearchMetadata(BaseModel):
     """Search metadata and relevance information"""
     query: Optional[str] = Field(None, description="Search query used")
     query_type: str = Field(..., description="Type: 'empty', 'exact', 'partial', 'fuzzy'")
+    star_rating_filter: Optional[str] = Field(None, description="Star rating filter applied (e.g., '4,5' or 'all')")
     min_relevance_score: Optional[float] = Field(None, description="Minimum relevance score")
     max_relevance_score: Optional[float] = Field(None, description="Maximum relevance score")
     total_before_search: int = Field(..., description="Total hotels before text filtering")
@@ -200,6 +201,7 @@ class HotelAvailabilityInfoEnhanced(HotelAvailabilityInfo):
     """Enhanced hotel info with search relevance"""
     relevance_score: Optional[float] = Field(None, description="Search relevance score (0-1)")
     match_type: Optional[str] = Field(None, description="Match type: 'exact', 'partial', 'fuzzy'")
+    country_name: str = Field(..., description="Country name")
     destination_name: str = Field(..., description="Destination name for grouping")
     area_name: Optional[str] = Field(None, description="Area name if applicable")
 

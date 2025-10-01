@@ -1,4 +1,4 @@
-from datetime import timedelta
+from datetime import timedelta, datetime
 from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Request, status
@@ -89,9 +89,11 @@ async def login(
         )
 
         # Store refresh token
+        refresh_token_expires_at = datetime.utcnow() + refresh_token_expires
         await RefreshToken.create(
             user=user,
             token=refresh_token,
+            expires_at=refresh_token_expires_at,
             user_agent=user_agent,
             ip_address=ip_address
         )
@@ -99,7 +101,8 @@ async def login(
         return {
             "access_token": access_token,
             "refresh_token": refresh_token,
-            "token_type": "bearer"
+            "token_type": "bearer",
+            "expires_in": settings.ACCESS_TOKEN_EXPIRE_MINUTES * 60
         }
     except Exception as e:
         if isinstance(e, HTTPException):
@@ -153,7 +156,8 @@ async def refresh_token(
         return {
             "access_token": access_token,
             "refresh_token": token_data.refresh_token,
-            "token_type": "bearer"
+            "token_type": "bearer",
+            "expires_in": settings.ACCESS_TOKEN_EXPIRE_MINUTES * 60
         }
     except Exception as e:
         if isinstance(e, HTTPException):

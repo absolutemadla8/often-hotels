@@ -20,7 +20,6 @@ from app.models.models import User, Task, TaskStatus, TaskLog, LogLevel
 from app.tasks.hotel_tracking_tasks import (
     trigger_hotel_tracking_now,
     trigger_destination_tracking_now,
-    trigger_bulk_tracking_now,
     get_tracking_summary_now
 )
 from app.services.hotel_tracking_service import get_hotel_tracking_service
@@ -266,11 +265,7 @@ async def start_bulk_tracking(
         )
         
         # Trigger the background task
-        task_id = await trigger_bulk_tracking_now(
-            destination_ids=request.destination_ids,
-            area_ids=request.area_ids,
-            tracking_days=request.tracking_days
-        )
+        task_id = await trigger_hotel_tracking_now()
         
         logger.info(
             f"Bulk tracking triggered for destinations {request.destination_ids} "

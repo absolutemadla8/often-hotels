@@ -31,6 +31,7 @@ async def search_hotels(
     page: int = Query(1, ge=1, le=1000, description="Page number"),
     per_page: int = Query(20, ge=1, le=100, description="Results per page"),
     sort_by: str = Query("relevance", description="Sort by: relevance, price_asc, price_desc, rating, name"),
+    star_rating: Optional[str] = Query("4,5", description="Star rating filter (comma-separated: 1,2,3,4,5 or 'all')"),
     current_user: Optional[User] = Depends(get_optional_current_user),
 ) -> JSONResponse:
     """
@@ -41,6 +42,7 @@ async def search_hotels(
     
     Features:
     - Text search with fuzzy matching on hotel names
+    - Star rating filtering (defaults to 4-5 star hotels only)
     - Pagination for large hotel datasets
     - Multiple sorting options (relevance, price, rating, name)
     - Empty search loads all hotels with pagination
@@ -56,6 +58,7 @@ async def search_hotels(
         page: Page number (1-based)
         per_page: Results per page (1-100)
         sort_by: Sort order (relevance/price_asc/price_desc/rating/name)
+        star_rating: Star rating filter (defaults to "4,5" for quality hotels, use "all" for no filter)
     """
     
     # Validate date range
@@ -87,8 +90,8 @@ async def search_hotels(
                 detail=f"Invalid area IDs format: {str(e)}"
             )
     
-    # Verify destinations exist
-    existing_destinations = await Destination.filter(id__in=destination_id_list).all()
+    # Verify destinations exist and prefetch country data
+    existing_destinations = await Destination.filter(id__in=destination_id_list).prefetch_related('country').all()
     if len(existing_destinations) != len(destination_id_list):
         found_dest_ids = {dest.id for dest in existing_destinations}
         missing_dest_ids = set(destination_id_list) - found_dest_ids
@@ -113,6 +116,18 @@ async def search_hotels(
     hotel_query = Hotel.filter(destination_id__in=destination_id_list, is_active=True)
     if area_id_list:
         hotel_query = hotel_query.filter(area_id__in=area_id_list)
+    
+    # Apply star rating filter
+    if star_rating and star_rating.lower() != "all":
+        try:
+            star_ratings = [int(rating.strip()) for rating in star_rating.split(",")]
+            # Validate star rating values (1-5)
+            valid_ratings = [r for r in star_ratings if 1 <= r <= 5]
+            if valid_ratings:
+                hotel_query = hotel_query.filter(star_rating__in=valid_ratings)
+        except (ValueError, AttributeError):
+            # If star_rating parsing fails, default to 4-5 star filter
+            hotel_query = hotel_query.filter(star_rating__in=[4, 5])
     
     # Implement search and fuzzy matching
     import time
@@ -180,7 +195,11 @@ async def search_hotels(
     # Note: price sorting will be applied after price data is loaded
     # relevance sorting is handled in fuzzy search above
     
-    hotels = await paginated_query.all()
+    # Include related destination, area, and country data
+    hotels = await paginated_query.prefetch_related(
+        'destination__country', 
+        'area'
+    ).all()
     
     search_time_ms = (time.time() - search_start_time) * 1000
     
@@ -206,6 +225,7 @@ async def search_hotels(
         search_metadata = SearchMetadata(
             query=search_query_normalized,
             query_type=query_type,
+            star_rating_filter=star_rating,
             total_before_search=base_hotels_count,
             search_time_ms=search_time_ms
         )
@@ -357,6 +377,7 @@ async def search_hotels(
             currency=currency,
             relevance_score=relevance_score,
             match_type=match_type,
+            country_name=hotel_destination.country.name if hotel_destination and hotel_destination.country else "Unknown",
             destination_name=hotel_destination.name if hotel_destination else "Unknown",
             area_name=hotel_area.name if hotel_area else None
         )
@@ -401,6 +422,7 @@ async def search_hotels(
     search_metadata = SearchMetadata(
         query=search_query_normalized,
         query_type=query_type,
+        star_rating_filter=star_rating,
         min_relevance_score=min_relevance,
         max_relevance_score=max_relevance,
         total_before_search=base_hotels_count,

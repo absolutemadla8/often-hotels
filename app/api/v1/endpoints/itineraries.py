@@ -10,7 +10,7 @@ from fastapi import APIRouter, Depends, HTTPException, status, BackgroundTasks
 from fastapi.responses import JSONResponse
 import logging
 
-from app.api.tortoise_deps import get_current_active_user
+from app.api.tortoise_deps import get_optional_current_user, get_current_active_user
 from app.models.models import User
 from app.services.itinerary_optimization_service import (
     get_itinerary_optimization_service, ItineraryOptimizationService
@@ -29,7 +29,7 @@ router = APIRouter()
 async def optimize_itinerary(
     request: ItineraryOptimizationRequest,
     background_tasks: BackgroundTasks,
-    # current_user: User = Depends(get_current_active_user),  # Temporarily disabled for testing
+    current_user: Optional[User] = Depends(get_optional_current_user),
     optimization_service: ItineraryOptimizationService = Depends(get_itinerary_optimization_service)
 ) -> JSONResponse:
     """
@@ -99,9 +99,7 @@ async def optimize_itinerary(
     ```
     """
     try:
-        # Temporarily use None for user during testing
-        current_user = None
-        user_id = "test_user"
+        user_id = current_user.id if current_user else "anonymous"
         
         logger.info(f"User {user_id} requested itinerary optimization")
         logger.debug(f"Request: {request.model_dump()}")

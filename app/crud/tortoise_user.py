@@ -9,14 +9,24 @@ class TortoiseUserCRUD:
     async def get_by_id(self, user_id: int) -> Optional[User]:
         return await User.get_or_none(id=user_id)
 
-    async def create(self, email: str, username: str, password: str, full_name: str = None) -> User:
-        user = await User.create(
-            email=email,
-            username=username,
-            hashed_password=get_password_hash(password),
-            full_name=full_name,
-            is_active=True
-        )
+    async def create(self, obj_in) -> User:
+        # Handle both direct field arguments and schema objects
+        if hasattr(obj_in, 'email'):
+            # Schema object
+            user_data = {
+                'email': obj_in.email,
+                'hashed_password': get_password_hash(obj_in.password),
+                'full_name': getattr(obj_in, 'full_name', None) or f"{getattr(obj_in, 'first_name', '')} {getattr(obj_in, 'last_name', '')}".strip(),
+                'is_active': True,
+                'is_superuser': False
+            }
+        else:
+            # Direct arguments (legacy support)
+            user_data = obj_in
+            if 'password' in user_data:
+                user_data['hashed_password'] = get_password_hash(user_data.pop('password'))
+                
+        user = await User.create(**user_data)
         return user
 
     async def authenticate(self, email: str, password: str) -> Optional[User]:

@@ -1,0 +1,11 @@
+{
+  "admin_email": "trippy@oftenhotels.com",
+  "admin_password": "admin123",
+  "user_id": 3,
+  "access_token": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIzIiwiZXhwIjoxNzc0ODc1MjU4LCJ0eXBlIjoiYWNjZXNzIn0.5mU0YGQH4-QMoVfVhJGWyYoPGuaD3TYFq20JO0e3i2k",
+  "token_type": "bearer",
+  "expires_in_days": 180,
+  "expires_on": "2026-03-30T12:54:18.127009",
+  "expires_timestamp": 1774875258.127009,
+  "generated_on": "2025-10-01T12:54:18.127173"
+}
