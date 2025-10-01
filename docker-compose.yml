@@ -55,7 +55,7 @@ services:
     image: redis:7-alpine
     container_name: often-hotels-redis
     ports:
-      - "6382:6379"
+      - "6383:6379"
     command: redis-server --appendonly yes --requirepass ""
     volumes:
       - redis_data:/data
