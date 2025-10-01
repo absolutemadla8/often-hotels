@@ -155,7 +155,7 @@ class HotelAvailabilityInfo(BaseModel):
 
 
 class HotelSearchResponse(BaseModel):
-    """Response for hotel search"""
+    """Response for hotel search (legacy format)"""
     destination_id: int = Field(..., description="Destination ID")
     destination_name: str = Field(..., description="Destination name")
     area_id: Optional[int] = Field(None, description="Area ID if specified")
@@ -165,6 +165,75 @@ class HotelSearchResponse(BaseModel):
     total_hotels_found: int = Field(..., description="Total hotels with availability")
     hotels_full_coverage: int = Field(..., description="Hotels covering entire date range")
     hotels: List[HotelAvailabilityInfo] = Field(..., description="Available hotels")
+    
+    model_config = ConfigDict(from_attributes=True)
+
+
+class PaginationMeta(BaseModel):
+    """Pagination metadata for hotel search"""
+    page: int = Field(..., ge=1, description="Current page number")
+    per_page: int = Field(..., ge=1, le=100, description="Results per page")
+    total: int = Field(..., ge=0, description="Total number of results")
+    pages: int = Field(..., ge=0, description="Total number of pages")
+    has_next: bool = Field(..., description="Whether there is a next page")
+    has_prev: bool = Field(..., description="Whether there is a previous page")
+
+
+class SearchMetadata(BaseModel):
+    """Search metadata and relevance information"""
+    query: Optional[str] = Field(None, description="Search query used")
+    query_type: str = Field(..., description="Type: 'empty', 'exact', 'partial', 'fuzzy'")
+    min_relevance_score: Optional[float] = Field(None, description="Minimum relevance score")
+    max_relevance_score: Optional[float] = Field(None, description="Maximum relevance score")
+    total_before_search: int = Field(..., description="Total hotels before text filtering")
+    search_time_ms: Optional[float] = Field(None, description="Search execution time in milliseconds")
+
+
+class SortingInfo(BaseModel):
+    """Sorting information for search results"""
+    sort_by: str = Field(..., description="Sort field used")
+    sort_order: str = Field(..., description="Sort order: 'asc' or 'desc'")
+    available_sorts: List[str] = Field(..., description="Available sort options")
+
+
+class HotelAvailabilityInfoEnhanced(HotelAvailabilityInfo):
+    """Enhanced hotel info with search relevance"""
+    relevance_score: Optional[float] = Field(None, description="Search relevance score (0-1)")
+    match_type: Optional[str] = Field(None, description="Match type: 'exact', 'partial', 'fuzzy'")
+    destination_name: str = Field(..., description="Destination name for grouping")
+    area_name: Optional[str] = Field(None, description="Area name if applicable")
+
+
+class HotelSearchSummary(BaseModel):
+    """Summary of hotel search operation"""
+    destinations_searched: int = Field(..., description="Number of destinations searched")
+    areas_searched: int = Field(0, description="Number of areas searched")
+    total_locations: int = Field(..., description="Total search locations")
+    hotels_per_destination: Dict[str, int] = Field(..., description="Hotel count by destination")
+    hotels_per_area: Dict[str, int] = Field(default_factory=dict, description="Hotel count by area")
+    price_range_summary: Dict[str, Any] = Field(..., description="Overall price range info")
+
+
+class PaginatedHotelSearchResponse(BaseModel):
+    """Enhanced paginated hotel search response with search and filtering"""
+    destination_ids: List[int] = Field(..., description="Searched destination IDs")
+    destination_names: List[str] = Field(..., description="Searched destination names")
+    area_ids: Optional[List[int]] = Field(None, description="Searched area IDs")
+    area_names: Optional[List[str]] = Field(None, description="Searched area names")
+    date_range: Dict[str, str] = Field(..., description="Search date range")
+    currency: str = Field(..., description="Price currency")
+    
+    # Search and pagination
+    search_metadata: SearchMetadata = Field(..., description="Search operation metadata")
+    pagination: PaginationMeta = Field(..., description="Pagination information")
+    sorting: SortingInfo = Field(..., description="Sorting information")
+    
+    # Results
+    hotels: List[HotelAvailabilityInfoEnhanced] = Field(..., description="Hotel results with relevance")
+    hotels_full_coverage: int = Field(..., description="Hotels covering entire date range")
+    
+    # Summary
+    search_summary: HotelSearchSummary = Field(..., description="Search operation summary")
     
     model_config = ConfigDict(from_attributes=True)
 
