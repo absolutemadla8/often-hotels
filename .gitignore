@@ -3,6 +3,9 @@ venv/
 env/
 .env
 *.env
+.env.production
+.env.staging
+.env.local
 
 # Database
 # PostgreSQL dumps and logs

@@ -6,7 +6,7 @@ All endpoints require admin authentication and provide comprehensive tracking ma
 """
 
 import logging
-from typing import Dict, Any, Optional
+from typing import Dict, Any, Optional, List
 from datetime import datetime
 
 from fastapi import APIRouter, HTTPException, status, Depends, BackgroundTasks
@@ -20,6 +20,7 @@ from app.models.models import User, Task, TaskStatus, TaskLog, LogLevel
 from app.tasks.hotel_tracking_tasks import (
     trigger_hotel_tracking_now,
     trigger_destination_tracking_now,
+    trigger_bulk_tracking_now,
     get_tracking_summary_now
 )
 from app.services.hotel_tracking_service import get_hotel_tracking_service
@@ -66,6 +67,13 @@ class DestinationTrackingRequest(BaseModel):
     destination_id: int = Field(..., description="Destination ID to track", gt=0)
 
 
+class BulkTrackingRequest(BaseModel):
+    """Request model for bulk destination and area tracking"""
+    destination_ids: List[int] = Field(..., description="List of destination IDs to track", min_items=1)
+    area_ids: Optional[List[int]] = Field(None, description="Optional list of area IDs to track")
+    tracking_days: Optional[int] = Field(60, description="Number of days to track (default: 60)", ge=1, le=180)
+
+
 # Endpoints
 @router.post(
     "/start",
@@ -73,9 +81,9 @@ class DestinationTrackingRequest(BaseModel):
     summary="Trigger Hotel Tracking",
     description="Manually trigger hotel price tracking for all enabled destinations"
 )
-# @admin_endpoint
+@admin_endpoint
 async def start_hotel_tracking(
-    # admin_user: User = get_admin_user()
+    admin_user: User = Depends(get_admin_user)
 ) -> TaskResponse:
     """
     Trigger immediate hotel price tracking scan for all destinations with tracking enabled.
@@ -90,11 +98,11 @@ async def start_hotel_tracking(
     """
     try:
         # Log admin action
-        # log_admin_action(
-        #     user=admin_user,
-        #     action="triggered_hotel_tracking_scan",
-        #     details={"endpoint": "/admin/hotel-tracking/start"}
-        # )
+        log_admin_action(
+            user=admin_user,
+            action="triggered_hotel_tracking_scan",
+            details={"endpoint": "/admin/hotel-tracking/start"}
+        )
         
         # Trigger the background task
         task_id = await trigger_hotel_tracking_now()
@@ -121,10 +129,10 @@ async def start_hotel_tracking(
     summary="Track Single Destination",
     description="Trigger hotel tracking for a specific destination"
 )
-# @admin_endpoint
+@admin_endpoint
 async def start_destination_tracking(
     destination_id: int,
-    # admin_user: User = get_admin_user()
+    admin_user: User = Depends(get_admin_user)
 ) -> TaskResponse:
     """
     Trigger hotel price tracking for a specific destination.
@@ -146,14 +154,14 @@ async def start_destination_tracking(
             )
         
         # Log admin action
-        # log_admin_action(
-        #     user=admin_user,
-        #     action="triggered_destination_tracking",
-        #     details={
-        #         "endpoint": f"/admin/hotel-tracking/destination/{destination_id}",
-        #         "destination_id": destination_id
-        #     }
-        # )
+        log_admin_action(
+            user=admin_user,
+            action="triggered_destination_tracking",
+            details={
+                "endpoint": f"/admin/hotel-tracking/destination/{destination_id}",
+                "destination_id": destination_id
+            }
+        )
         
         # Trigger the background task
         task_id = await trigger_destination_tracking_now(destination_id)
@@ -178,16 +186,124 @@ async def start_destination_tracking(
         )
 
 
+@router.post(
+    "/start/bulk",
+    response_model=TaskResponse,
+    summary="Bulk Track Destinations and Areas",
+    description="Trigger hotel tracking for multiple destinations and areas"
+)
+@admin_endpoint
+async def start_bulk_tracking(
+    request: BulkTrackingRequest,
+    admin_user: User = Depends(get_admin_user)
+) -> TaskResponse:
+    """
+    Trigger hotel price tracking for multiple destinations and areas.
+    
+    This endpoint starts a background task that will:
+    1. Process the specified list of destinations
+    2. Optionally process the specified list of areas
+    3. Search for hotels across all tracking days
+    4. Create/update hotel and price records
+    
+    Args:
+        request: Bulk tracking request with destination IDs, area IDs, and tracking days
+    """
+    try:
+        # Validate destination IDs
+        if not request.destination_ids:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="At least one destination ID is required"
+            )
+        
+        # Validate that all destination IDs are positive
+        if any(dest_id <= 0 for dest_id in request.destination_ids):
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="All destination IDs must be positive integers"
+            )
+        
+        # Validate area IDs if provided
+        if request.area_ids and any(area_id <= 0 for area_id in request.area_ids):
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="All area IDs must be positive integers"
+            )
+        
+        # Verify destinations exist
+        from app.models.models import Destination, Area
+        existing_destinations = await Destination.filter(id__in=request.destination_ids).all()
+        if len(existing_destinations) != len(request.destination_ids):
+            found_ids = {dest.id for dest in existing_destinations}
+            missing_ids = set(request.destination_ids) - found_ids
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"Destinations not found: {list(missing_ids)}"
+            )
+        
+        # Verify areas exist if provided
+        if request.area_ids:
+            existing_areas = await Area.filter(id__in=request.area_ids).all()
+            if len(existing_areas) != len(request.area_ids):
+                found_area_ids = {area.id for area in existing_areas}
+                missing_area_ids = set(request.area_ids) - found_area_ids
+                raise HTTPException(
+                    status_code=status.HTTP_404_NOT_FOUND,
+                    detail=f"Areas not found: {list(missing_area_ids)}"
+                )
+        
+        # Log admin action
+        log_admin_action(
+            user=admin_user,
+            action="triggered_bulk_tracking",
+            details={
+                "endpoint": "/admin/hotel-tracking/start/bulk",
+                "destination_ids": request.destination_ids,
+                "area_ids": request.area_ids,
+                "tracking_days": request.tracking_days
+            }
+        )
+        
+        # Trigger the background task
+        task_id = await trigger_bulk_tracking_now(
+            destination_ids=request.destination_ids,
+            area_ids=request.area_ids,
+            tracking_days=request.tracking_days
+        )
+        
+        logger.info(
+            f"Bulk tracking triggered for destinations {request.destination_ids} "
+            f"and areas {request.area_ids}, task ID: {task_id}"
+        )
+        
+        return TaskResponse(
+            task_id=task_id,
+            message=f"Bulk tracking started for {len(request.destination_ids)} destinations" + 
+                   (f" and {len(request.area_ids)} areas" if request.area_ids else ""),
+            status="PENDING"
+        )
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Failed to start bulk tracking: {str(e)}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to start bulk tracking: {str(e)}"
+        )
+
+
 @router.get(
     "/status/{task_id}",
     response_model=TaskStatusResponse,
     summary="Get Task Status",
     description="Get the status and progress of a hotel tracking task"
 )
-# @admin_endpoint
+@admin_endpoint
 async def get_task_status(
     task_id: str,
-    # admin_user: User = get_admin_user()
+    admin_user: User = Depends(get_admin_user)
 ) -> TaskStatusResponse:
     """
     Get the current status and progress of a hotel tracking task.
@@ -239,9 +355,9 @@ async def get_task_status(
     summary="Get Tracking Configuration",
     description="Get current hotel tracking configuration and statistics"
 )
-# @admin_endpoint
+@admin_endpoint
 async def get_tracking_config(
-    # admin_user: User = get_admin_user()
+    admin_user: User = Depends(get_admin_user)
 ) -> TrackingConfigResponse:
     """
     Get the current hotel tracking configuration and statistics.
@@ -253,11 +369,11 @@ async def get_tracking_config(
     """
     try:
         # Log admin action
-        # log_admin_action(
-        #     user=admin_user,
-        #     action="viewed_tracking_config",
-        #     details={"endpoint": "/admin/hotel-tracking/config"}
-        # )
+        log_admin_action(
+            user=admin_user,
+            action="viewed_tracking_config",
+            details={"endpoint": "/admin/hotel-tracking/config"}
+        )
         
         # Get tracking configuration using the service
         async with await get_hotel_tracking_service() as tracking_service:
@@ -284,9 +400,9 @@ async def get_tracking_config(
     summary="Get Tracking Summary",
     description="Get detailed tracking summary as a background task"
 )
-# @admin_endpoint
+@admin_endpoint
 async def get_tracking_summary_task(
-    # admin_user: User = get_admin_user()
+    admin_user: User = Depends(get_admin_user)
 ) -> TaskResponse:
     """
     Generate a detailed tracking summary as a background task.
@@ -295,11 +411,11 @@ async def get_tracking_summary_task(
     """
     try:
         # Log admin action
-        # log_admin_action(
-        #     user=admin_user,
-        #     action="requested_tracking_summary",
-        #     details={"endpoint": "/admin/hotel-tracking/summary"}
-        # )
+        log_admin_action(
+            user=admin_user,
+            action="requested_tracking_summary",
+            details={"endpoint": "/admin/hotel-tracking/summary"}
+        )
         
         # Trigger the background task
         task_id = await get_tracking_summary_now()
@@ -325,9 +441,9 @@ async def get_tracking_summary_task(
     summary="Health Check",
     description="Check if hotel tracking system is healthy"
 )
-# @admin_endpoint
+@admin_endpoint
 async def health_check(
-    # admin_user: User = get_admin_user()
+    admin_user: User = Depends(get_admin_user)
 ) -> Dict[str, Any]:
     """
     Health check endpoint for the hotel tracking system.
@@ -384,11 +500,11 @@ async def health_check(
     summary="Stream Task Logs",
     description="Stream real-time logs for a hotel tracking task using Server-Sent Events"
 )
-# @admin_endpoint
+@admin_endpoint
 async def stream_task_logs(
     task_id: str,
     level: Optional[str] = None,
-    # admin_user: User = get_admin_user()
+    admin_user: User = Depends(get_admin_user)
 ):
     """
     Stream real-time logs for a specific task using Server-Sent Events.
@@ -514,12 +630,12 @@ async def stream_task_logs(
     summary="Get Task Logs",
     description="Get all logs for a specific task"
 )
-# @admin_endpoint
+@admin_endpoint
 async def get_task_logs(
     task_id: str,
     level: Optional[str] = None,
     limit: Optional[int] = 100,
-    # admin_user: User = get_admin_user()
+    admin_user: User = Depends(get_admin_user)
 ) -> Dict[str, Any]:
     """
     Get all logs for a specific task.

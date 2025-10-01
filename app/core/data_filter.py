@@ -99,16 +99,12 @@ class DataFilteringService:
     ) -> Any:
         """Apply field-level filtering to data"""
         
-        # TEMPORARILY DISABLED: Give all users full access for hosting demo
-        return data  # No field filtering applied - all users see all fields
-        
-        # Original filtering logic (commented out):
-        # if isinstance(data, dict):
-        #     return self._filter_dict_fields(data, user_tier, endpoint_config)
-        # elif isinstance(data, list):
-        #     return [self._filter_fields(item, user_tier, endpoint_config) for item in data]
-        # else:
-        #     return data
+        if isinstance(data, dict):
+            return self._filter_dict_fields(data, user_tier, endpoint_config)
+        elif isinstance(data, list):
+            return [self._filter_fields(item, user_tier, endpoint_config) for item in data]
+        else:
+            return data
     
     def _filter_dict_fields(
         self,
@@ -145,14 +141,10 @@ class DataFilteringService:
     ) -> Any:
         """Apply result count limits based on user tier"""
         
-        # TEMPORARILY DISABLED: Give all users full access for hosting demo
-        return data  # No limits applied - all users get full data
+        max_results = get_max_results(user_tier, endpoint_config)
         
-        # Original limiting logic (commented out):
-        # max_results = get_max_results(user_tier, endpoint_config)
-        # 
-        # if max_results is None:
-        #     return data  # No limit
+        if max_results is None:
+            return data  # No limit
         
         # Special handling for itinerary optimization normal search results
         if (endpoint_config.endpoint_path == "/itineraries/optimize" and 
@@ -184,12 +176,8 @@ class DataFilteringService:
     ) -> Dict[str, Any]:
         """Special handling for month-grouped normal search results (clean version without legacy)"""
         
-        # TEMPORARILY DISABLED: Give all users full access for hosting demo
-        return data  # No filtering applied - all users get full data
-        
-        # Original filtering logic (commented out):
-        # if user_tier != UserTier.ANONYMOUS or max_results != 1:
-        #     return data  # No special handling needed
+        if user_tier != UserTier.ANONYMOUS or max_results != 1:
+            return data  # No special handling needed
         
         # For anonymous users, find the nearest (chronologically first) option
         normal_results = data.get("normal", {})

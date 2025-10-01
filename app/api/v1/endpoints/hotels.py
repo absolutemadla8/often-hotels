@@ -17,18 +17,26 @@ router = APIRouter()
 
 @router.get("/search")
 async def search_hotels(
-    destination_id: int = Query(..., description="Destination ID"),
-    area_id: Optional[int] = Query(None, description="Area ID (optional)"),
+    destination_ids: str = Query(..., description="Destination IDs (comma-separated for multiple)"),
+    area_ids: Optional[str] = Query(None, description="Area IDs (comma-separated for multiple, optional)"),
     start_date: date = Query(..., description="Start date (YYYY-MM-DD)"),
     end_date: date = Query(..., description="End date (YYYY-MM-DD)"),
     currency: str = Query("USD", description="Currency code"),
     current_user: Optional[User] = Depends(get_optional_current_user),
 ) -> JSONResponse:
     """
-    Search hotels by destination/area and date range.
+    Search hotels by destination(s)/area(s) and date range.
     
     Returns hotels with availability and pricing information for the specified period.
+    Supports searching across multiple destinations and areas simultaneously.
     Helps users select preferred hotels for itinerary optimization.
+    
+    Args:
+        destination_ids: Comma-separated list of destination IDs (e.g., "1,2,3")
+        area_ids: Optional comma-separated list of area IDs (e.g., "1,2")
+        start_date: Check-in date
+        end_date: Check-out date
+        currency: Currency code for pricing
     """
     
     # Validate date range
@@ -38,44 +46,83 @@ async def search_hotels(
             detail="End date must be after start date"
         )
     
-    # Verify destination exists
-    destination = await Destination.get_or_none(id=destination_id)
-    if not destination:
+    # Parse destination IDs
+    try:
+        destination_id_list = [int(x.strip()) for x in destination_ids.split(",") if x.strip()]
+        if not destination_id_list:
+            raise ValueError("No destination IDs provided")
+    except ValueError as e:
         raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"Destination with ID {destination_id} not found"
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Invalid destination IDs format: {str(e)}"
         )
     
-    area = None
-    if area_id:
-        area = await Area.get_or_none(id=area_id, destination_id=destination_id)
-        if not area:
+    # Parse area IDs if provided
+    area_id_list = []
+    if area_ids:
+        try:
+            area_id_list = [int(x.strip()) for x in area_ids.split(",") if x.strip()]
+        except ValueError as e:
             raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail=f"Area with ID {area_id} not found in destination {destination_id}"
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"Invalid area IDs format: {str(e)}"
             )
     
-    # Build hotel query
-    hotel_query = Hotel.filter(destination_id=destination_id, is_active=True)
-    if area_id:
-        hotel_query = hotel_query.filter(area_id=area_id)
+    # Verify destinations exist
+    existing_destinations = await Destination.filter(id__in=destination_id_list).all()
+    if len(existing_destinations) != len(destination_id_list):
+        found_dest_ids = {dest.id for dest in existing_destinations}
+        missing_dest_ids = set(destination_id_list) - found_dest_ids
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Destinations not found: {list(missing_dest_ids)}"
+        )
+    
+    # Verify areas exist if provided
+    existing_areas = []
+    if area_id_list:
+        existing_areas = await Area.filter(id__in=area_id_list).all()
+        if len(existing_areas) != len(area_id_list):
+            found_area_ids = {area.id for area in existing_areas}
+            missing_area_ids = set(area_id_list) - found_area_ids
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"Areas not found: {list(missing_area_ids)}"
+            )
+    
+    # Build hotel query for multiple destinations
+    hotel_query = Hotel.filter(destination_id__in=destination_id_list, is_active=True)
+    if area_id_list:
+        hotel_query = hotel_query.filter(area_id__in=area_id_list)
     
     hotels = await hotel_query.all()
     
     if not hotels:
-        response_data = HotelSearchResponse(
-            destination_id=destination_id,
-            destination_name=destination.name,
-            area_id=area_id,
-            area_name=area.name if area else None,
-            date_range=DateRange(start=start_date, end=end_date),
-            currency=currency,
-            total_hotels_found=0,
-            hotels_full_coverage=0,
-            hotels=[]
-        )
+        # Create a unified response for multiple destinations/areas
+        destination_names = [dest.name for dest in existing_destinations]
+        area_names = [area.name for area in existing_areas] if existing_areas else []
+        
+        response_data = {
+            "destination_ids": destination_id_list,
+            "destination_names": destination_names,
+            "area_ids": area_id_list if area_id_list else None,
+            "area_names": area_names if area_names else None,
+            "date_range": {
+                "start": start_date.isoformat(),
+                "end": end_date.isoformat()
+            },
+            "currency": currency,
+            "total_hotels_found": 0,
+            "hotels_full_coverage": 0,
+            "hotels": [],
+            "search_summary": {
+                "destinations_searched": len(destination_id_list),
+                "areas_searched": len(area_id_list) if area_id_list else 0,
+                "total_locations": len(destination_id_list) + len(area_id_list)
+            }
+        }
         return create_filtered_response(
-            data=response_data.model_dump(),
+            data=response_data,
             user=current_user,
             endpoint_path="/hotels/search"
         )
@@ -167,21 +214,41 @@ async def search_hotels(
         key=lambda h: (not h.covers_full_range, h.avg_price)
     )
     
-    response_data = HotelSearchResponse(
-        destination_id=destination_id,
-        destination_name=destination.name,
-        area_id=area_id,
-        area_name=area.name if area else None,
-        date_range=DateRange(start=start_date, end=end_date),
-        currency=currency,
-        total_hotels_found=len(hotel_availability_list),
-        hotels_full_coverage=hotels_with_full_coverage,
-        hotels=hotel_availability_list
-    )
+    # Create unified response for multiple destinations/areas
+    destination_names = [dest.name for dest in existing_destinations]
+    area_names = [area.name for area in existing_areas] if existing_areas else []
+    
+    response_data = {
+        "destination_ids": destination_id_list,
+        "destination_names": destination_names,
+        "area_ids": area_id_list if area_id_list else None,
+        "area_names": area_names if area_names else None,
+        "date_range": {
+            "start": start_date.isoformat(),
+            "end": end_date.isoformat()
+        },
+        "currency": currency,
+        "total_hotels_found": len(hotel_availability_list),
+        "hotels_full_coverage": hotels_with_full_coverage,
+        "hotels": [hotel.model_dump() for hotel in hotel_availability_list],
+        "search_summary": {
+            "destinations_searched": len(destination_id_list),
+            "areas_searched": len(area_id_list) if area_id_list else 0,
+            "total_locations": len(destination_id_list) + len(area_id_list),
+            "hotels_per_destination": {
+                dest.name: len([h for h in hotels if h.destination_id == dest.id])
+                for dest in existing_destinations
+            },
+            "hotels_per_area": {
+                area.name: len([h for h in hotels if h.area_id == area.id])
+                for area in existing_areas
+            } if existing_areas else {}
+        }
+    }
     
     # Apply user access filtering
     return create_filtered_response(
-        data=response_data.model_dump(),
+        data=response_data,
         user=current_user,
         endpoint_path="/hotels/search"
     )
