@@ -1,252 +1,266 @@
 from typing import Any, List, Optional
+from datetime import date
+from decimal import Decimal
+from collections import defaultdict
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, status, Query
+from fastapi.responses import JSONResponse
 
 from app import models, schemas
-from app.models.models import User
+from app.models.models import User, Hotel, UniversalPriceHistory, Destination, Area
 from app.api.tortoise_deps import get_optional_current_user, get_current_verified_user, get_current_superuser
+from app.schemas.itinerary import HotelSearchRequest, HotelSearchResponse, HotelAvailabilityInfo, DateRange
+from app.core.data_filter import filter_by_user_access, create_filtered_response
 
 router = APIRouter()
 
 
-# Example hotel data (in production, this would come from a database)
-SAMPLE_HOTELS = [
-    {
-        "id": 1,
-        "name": "Luxury Resort & Spa",
-        "location": "Bali, Indonesia",
-        "description": "A beautiful beachfront resort with world-class amenities",
-        "price_per_night": 350.00,
-        "rating": 4.8,
-        "amenities": ["Pool", "Spa", "Beach Access", "Restaurant", "WiFi"],
-        "available": True
-    },
-    {
-        "id": 2,
-        "name": "City Center Business Hotel",
-        "location": "New York, USA",
-        "description": "Modern business hotel in the heart of Manhattan",
-        "price_per_night": 275.00,
-        "rating": 4.3,
-        "amenities": ["Business Center", "Gym", "Restaurant", "WiFi", "Parking"],
-        "available": True
-    },
-    {
-        "id": 3,
-        "name": "Mountain Lodge",
-        "location": "Swiss Alps, Switzerland",
-        "description": "Cozy lodge with stunning mountain views",
-        "price_per_night": 180.00,
-        "rating": 4.6,
-        "amenities": ["Mountain View", "Fireplace", "Restaurant", "Hiking Trails"],
-        "available": False
-    }
-]
-
-
-@router.get("/")
-async def get_hotels(
-    skip: int = 0,
-    limit: int = 10,
-    location: Optional[str] = None,
-    current_user: Optional[models.User] = Depends(get_optional_current_user),
-) -> Any:
+@router.get("/search")
+async def search_hotels(
+    destination_id: int = Query(..., description="Destination ID"),
+    area_id: Optional[int] = Query(None, description="Area ID (optional)"),
+    start_date: date = Query(..., description="Start date (YYYY-MM-DD)"),
+    end_date: date = Query(..., description="End date (YYYY-MM-DD)"),
+    currency: str = Query("USD", description="Currency code"),
+    current_user: Optional[User] = Depends(get_optional_current_user),
+) -> JSONResponse:
     """
-    Get list of hotels. (Public endpoint with optional authentication)
+    Search hotels by destination/area and date range.
     
-    - Authenticated users get additional details
-    - Public users get basic information only
+    Returns hotels with availability and pricing information for the specified period.
+    Helps users select preferred hotels for itinerary optimization.
     """
-    hotels = SAMPLE_HOTELS[skip : skip + limit]
     
-    if location:
-        hotels = [h for h in hotels if location.lower() in h["location"].lower()]
+    # Validate date range
+    if end_date <= start_date:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="End date must be after start date"
+        )
     
-    # If user is not authenticated, remove sensitive information
-    if not current_user:
-        for hotel in hotels:
-            hotel.pop("available", None)  # Remove availability for non-authenticated users
-            
-    return {
-        "hotels": hotels,
-        "total": len(SAMPLE_HOTELS),
-        "authenticated": current_user is not None
-    }
+    # Verify destination exists
+    destination = await Destination.get_or_none(id=destination_id)
+    if not destination:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Destination with ID {destination_id} not found"
+        )
+    
+    area = None
+    if area_id:
+        area = await Area.get_or_none(id=area_id, destination_id=destination_id)
+        if not area:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"Area with ID {area_id} not found in destination {destination_id}"
+            )
+    
+    # Build hotel query
+    hotel_query = Hotel.filter(destination_id=destination_id, is_active=True)
+    if area_id:
+        hotel_query = hotel_query.filter(area_id=area_id)
+    
+    hotels = await hotel_query.all()
+    
+    if not hotels:
+        response_data = HotelSearchResponse(
+            destination_id=destination_id,
+            destination_name=destination.name,
+            area_id=area_id,
+            area_name=area.name if area else None,
+            date_range=DateRange(start=start_date, end=end_date),
+            currency=currency,
+            total_hotels_found=0,
+            hotels_full_coverage=0,
+            hotels=[]
+        )
+        return create_filtered_response(
+            data=response_data.model_dump(),
+            user=current_user,
+            endpoint_path="/hotels/search"
+        )
+    
+    # Get price data for all hotels in the date range
+    hotel_ids = [hotel.id for hotel in hotels]
+    
+    price_query = UniversalPriceHistory.filter(
+        trackable_id__in=hotel_ids,
+        price_date__gte=start_date,
+        price_date__lte=end_date,
+        currency=currency,
+        is_available=True
+    ).order_by('trackable_id', 'price_date', '-recorded_at')
+    
+    price_records = await price_query.all()
+    
+    # Group prices by hotel and date (using latest recorded price for each date)
+    hotel_prices = defaultdict(dict)
+    for record in price_records:
+        hotel_id = record.trackable_id
+        date_str = record.price_date.isoformat()
+        
+        # Use most recent price for each date
+        if (date_str not in hotel_prices[hotel_id] or 
+            record.recorded_at > hotel_prices[hotel_id][date_str]['recorded_at']):
+            hotel_prices[hotel_id][date_str] = {
+                'price': record.price,
+                'recorded_at': record.recorded_at
+            }
+    
+    # Generate date range for checking coverage
+    from datetime import timedelta
+    date_range = []
+    current_date = start_date
+    while current_date <= end_date:
+        date_range.append(current_date.isoformat())
+        current_date = current_date + timedelta(days=1)
+    
+    total_nights = len(date_range)
+    
+    # Build response for each hotel
+    hotel_availability_list = []
+    hotels_with_full_coverage = 0
+    
+    for hotel in hotels:
+        hotel_id = hotel.id
+        hotel_date_prices = hotel_prices.get(hotel_id, {})
+        
+        if not hotel_date_prices:
+            continue  # Skip hotels with no price data
+        
+        available_dates = []
+        prices = []
+        
+        for date_str in date_range:
+            if date_str in hotel_date_prices:
+                available_dates.append(date.fromisoformat(date_str))
+                prices.append(hotel_date_prices[date_str]['price'])
+        
+        if not prices:
+            continue  # Skip if no prices available
+        
+        covers_full_range = len(available_dates) == total_nights
+        if covers_full_range:
+            hotels_with_full_coverage += 1
+        
+        min_price = min(prices)
+        max_price = max(prices)
+        avg_price = sum(prices) / len(prices)
+        
+        hotel_info = HotelAvailabilityInfo(
+            hotel_id=hotel_id,
+            hotel_name=hotel.name,
+            star_rating=hotel.star_rating,
+            guest_rating=hotel.guest_rating,
+            available_dates=available_dates,
+            price_range={"min": min_price, "max": max_price},
+            avg_price=Decimal(str(round(avg_price, 2))),
+            total_nights_available=len(available_dates),
+            covers_full_range=covers_full_range,
+            currency=currency
+        )
+        
+        hotel_availability_list.append(hotel_info)
+    
+    # Sort hotels: full coverage first, then by average price
+    hotel_availability_list.sort(
+        key=lambda h: (not h.covers_full_range, h.avg_price)
+    )
+    
+    response_data = HotelSearchResponse(
+        destination_id=destination_id,
+        destination_name=destination.name,
+        area_id=area_id,
+        area_name=area.name if area else None,
+        date_range=DateRange(start=start_date, end=end_date),
+        currency=currency,
+        total_hotels_found=len(hotel_availability_list),
+        hotels_full_coverage=hotels_with_full_coverage,
+        hotels=hotel_availability_list
+    )
+    
+    # Apply user access filtering
+    return create_filtered_response(
+        data=response_data.model_dump(),
+        user=current_user,
+        endpoint_path="/hotels/search"
+    )
 
 
 @router.get("/{hotel_id}")
-async def get_hotel(
+async def get_hotel_details(
     hotel_id: int,
-    current_user: Optional[models.User] = Depends(get_optional_current_user),
+    current_user: Optional[User] = Depends(get_optional_current_user),
 ) -> Any:
     """
-    Get hotel details by ID. (Public endpoint with optional authentication)
+    Get detailed information about a specific hotel.
     """
-    hotel = next((h for h in SAMPLE_HOTELS if h["id"] == hotel_id), None)
+    hotel = await Hotel.get_or_none(id=hotel_id)
     if not hotel:
-        raise HTTPException(status_code=404, detail="Hotel not found")
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Hotel not found"
+        )
     
-    # Authenticated users get full details
-    if current_user:
-        return {
-            "hotel": hotel,
-            "user_authenticated": True,
-            "special_offers": ["10% discount for verified users", "Free breakfast"]
-        }
-    else:
-        # Remove sensitive information for non-authenticated users
-        public_hotel = hotel.copy()
-        public_hotel.pop("available", None)
-        return {
-            "hotel": public_hotel,
-            "user_authenticated": False,
-            "message": "Login for exclusive offers and availability"
-        }
-
-
-@router.post("/{hotel_id}/book")
-async def book_hotel(
-    hotel_id: int,
-    booking_data: dict,  # In production, use proper Pydantic model
-    current_user: models.User = Depends(get_current_verified_user),
-) -> Any:
-    """
-    Book a hotel. (Requires verified user authentication)
-    """
-    hotel = next((h for h in SAMPLE_HOTELS if h["id"] == hotel_id), None)
-    if not hotel:
-        raise HTTPException(status_code=404, detail="Hotel not found")
-    
-    if not hotel.get("available", True):
-        raise HTTPException(status_code=400, detail="Hotel is not available")
-    
-    # In production, this would create a booking record in the database
-    booking = {
-        "booking_id": f"BK{hotel_id}{current_user.id}001",
-        "hotel_name": hotel["name"],
-        "user_email": current_user.email,
-        "user_name": f"{current_user.first_name} {current_user.last_name}",
-        "booking_data": booking_data,
-        "total_price": hotel["price_per_night"] * booking_data.get("nights", 1),
-        "status": "confirmed"
-    }
+    # Get destination and area info
+    destination = await Destination.get_or_none(id=hotel.destination_id)
+    area = await Area.get_or_none(id=hotel.area_id) if hotel.area_id else None
     
     return {
-        "message": "Booking confirmed successfully",
-        "booking": booking
-    }
-
-
-@router.get("/{hotel_id}/reviews")
-async def get_hotel_reviews(
-    hotel_id: int,
-    current_user: models.User = Depends(get_current_verified_user),
-) -> Any:
-    """
-    Get hotel reviews. (Requires authentication)
-    """
-    hotel = next((h for h in SAMPLE_HOTELS if h["id"] == hotel_id), None)
-    if not hotel:
-        raise HTTPException(status_code=404, detail="Hotel not found")
-    
-    # Sample reviews (in production, fetch from database)
-    reviews = [
-        {
-            "id": 1,
-            "user": "John D.",
-            "rating": 5,
-            "comment": "Absolutely fantastic stay! Will definitely come back.",
-            "date": "2024-01-15"
-        },
-        {
-            "id": 2,
-            "user": "Sarah M.",
-            "rating": 4,
-            "comment": "Great location and service. Room could be bigger.",
-            "date": "2024-01-10"
+        "hotel": {
+            "id": hotel.id,
+            "name": hotel.name,
+            "destination_id": hotel.destination_id,
+            "destination_name": destination.name if destination else None,
+            "area_id": hotel.area_id,
+            "area_name": area.name if area else None,
+            "star_rating": hotel.star_rating,
+            "guest_rating": hotel.guest_rating,
+            "description": hotel.short_description,
+            "amenities": hotel.amenities,
+            "is_active": hotel.is_active,
+            "partner_name": hotel.partner_name,
+            "external_id": hotel.external_id
         }
-    ]
-    
-    return {
-        "hotel_name": hotel["name"],
-        "reviews": reviews,
-        "average_rating": hotel["rating"]
     }
 
 
-@router.post("/{hotel_id}/reviews")
-async def create_hotel_review(
-    hotel_id: int,
-    review_data: dict,  # In production, use proper Pydantic model
-    current_user: models.User = Depends(get_current_verified_user),
+@router.get("/")
+async def list_hotels(
+    destination_id: Optional[int] = Query(None, description="Filter by destination ID"),
+    area_id: Optional[int] = Query(None, description="Filter by area ID"),
+    skip: int = Query(0, ge=0, description="Number of records to skip"),
+    limit: int = Query(100, ge=1, le=1000, description="Number of records to return"),
+    current_user: Optional[User] = Depends(get_optional_current_user),
 ) -> Any:
     """
-    Create a hotel review. (Requires verified user authentication)
+    List hotels with optional filtering by destination/area.
     """
-    hotel = next((h for h in SAMPLE_HOTELS if h["id"] == hotel_id), None)
-    if not hotel:
-        raise HTTPException(status_code=404, detail="Hotel not found")
+    query = Hotel.filter(is_active=True)
     
-    # In production, save review to database
-    review = {
-        "id": len(SAMPLE_HOTELS) + 1,
-        "hotel_id": hotel_id,
-        "user_id": current_user.id,
-        "user_name": f"{current_user.first_name} {current_user.last_name}",
-        "rating": review_data.get("rating"),
-        "comment": review_data.get("comment"),
-        "date": "2024-01-20"
-    }
+    if destination_id:
+        query = query.filter(destination_id=destination_id)
+    
+    if area_id:
+        query = query.filter(area_id=area_id)
+    
+    total = await query.count()
+    hotels = await query.offset(skip).limit(limit).all()
     
     return {
-        "message": "Review created successfully",
-        "review": review
+        "hotels": [
+            {
+                "id": hotel.id,
+                "name": hotel.name,
+                "destination_id": hotel.destination_id,
+                "area_id": hotel.area_id,
+                "star_rating": hotel.star_rating,
+                "guest_rating": hotel.guest_rating,
+                "partner_name": hotel.partner_name
+            }
+            for hotel in hotels
+        ],
+        "total": total,
+        "skip": skip,
+        "limit": limit
     }
-
-
-@router.get("/bookings/my")
-async def get_my_bookings(
-    current_user: models.User = Depends(get_current_verified_user),
-) -> Any:
-    """
-    Get current user's bookings. (Requires authentication)
-    """
-    # Sample user bookings (in production, fetch from database)
-    bookings = [
-        {
-            "booking_id": f"BK{current_user.id}001",
-            "hotel_name": "Luxury Resort & Spa",
-            "check_in": "2024-02-15",
-            "check_out": "2024-02-18",
-            "total_price": 1050.00,
-            "status": "confirmed"
-        }
-    ]
-    
-    return {
-        "bookings": bookings,
-        "total_bookings": len(bookings)
-    }
-
-
-@router.get("/admin/statistics")
-async def get_admin_statistics(
-    current_user: models.User = Depends(get_current_superuser),
-) -> Any:
-    """
-    Get booking statistics. (Admin only)
-    """
-    # Sample statistics (in production, calculate from database)
-    stats = {
-        "total_hotels": len(SAMPLE_HOTELS),
-        "total_bookings": 1247,
-        "revenue_this_month": 156750.50,
-        "active_users": await User.all().count(),  # Count active users
-        "popular_destinations": [
-            {"location": "Bali, Indonesia", "bookings": 342},
-            {"location": "New York, USA", "bookings": 289},
-            {"location": "Swiss Alps, Switzerland", "bookings": 156}
-        ]
-    }
-    
-    return stats

@@ -7,7 +7,7 @@ Calculates valid date windows for consecutive destination visits.
 
 import logging
 from datetime import date, timedelta
-from typing import List, Dict, Tuple, Optional, Iterator
+from typing import List, Dict, Tuple, Optional, Iterator, Any
 from dataclasses import dataclass
 
 from app.schemas.itinerary import DateRange, DestinationRequest, DateWindow
@@ -204,18 +204,22 @@ class DateWindowService:
         self,
         global_date_range: DateRange,
         destinations: List[DestinationRequest]
-    ) -> List[ConsecutiveAssignment]:
+    ) -> List[Dict[str, Any]]:
         """
-        Generate normal search assignments: start, middle, end of date range.
+        Generate month-grouped assignments with future-only options.
+        
+        Returns list of month objects with start/mid/end options.
+        Past options are set to None.
         
         Args:
             global_date_range: Overall trip date constraints
             destinations: Ordered destinations
             
         Returns:
-            List of up to 3 assignments (start, mid, end)
+            List of month dictionaries with assignments grouped by month
         """
-        assignments = []
+        from calendar import monthrange
+        
         total_nights = sum(dest.nights for dest in destinations)
         range_days = (global_date_range.end - global_date_range.start).days + 1
         
@@ -223,27 +227,319 @@ class DateWindowService:
             self.logger.warning("Trip too long for date range")
             return []
         
-        # Start of range
-        start_assignment = self._build_consecutive_assignment(destinations, global_date_range.start)
-        if start_assignment and start_assignment.end_date <= global_date_range.end:
-            assignments.append(start_assignment)
+        start_date = global_date_range.start
+        end_date = global_date_range.end
         
-        # Middle of range (if there's room)
-        if range_days >= total_nights + 2:  # Need at least 2 days buffer
-            mid_start = global_date_range.start + timedelta(days=(range_days - total_nights) // 2)
-            mid_assignment = self._build_consecutive_assignment(destinations, mid_start)
-            if mid_assignment and mid_assignment.end_date <= global_date_range.end:
-                assignments.append(mid_assignment)
+        self.logger.info(f"Generating month-grouped slices from {start_date} to {end_date}")
         
-        # End of range
-        end_start = global_date_range.end - timedelta(days=total_nights - 1)
-        if end_start != global_date_range.start:  # Don't duplicate start assignment
-            end_assignment = self._build_consecutive_assignment(destinations, end_start)
-            if end_assignment and end_assignment.end_date <= global_date_range.end:
-                assignments.append(end_assignment)
+        # Generate month-grouped options
+        month_groups = self._generate_month_grouped_options(
+            start_date, end_date, total_nights, destinations
+        )
         
-        self.logger.info(f"Generated {len(assignments)} monthly slice assignments")
-        return assignments
+        self.logger.info(f"Generated {len(month_groups)} month groups")
+        return month_groups
+    
+    def _generate_month_grouped_options(
+        self,
+        start_date: date,
+        end_date: date,
+        total_nights: int,
+        destinations: List[DestinationRequest]
+    ) -> List[Dict[str, Any]]:
+        """Generate options grouped by month with future-only logic"""
+        from calendar import monthrange
+        
+        month_groups = []
+        current_date = start_date
+        
+        # Generate options for current month and next 1-2 months
+        months_to_process = 0
+        while current_date <= end_date and months_to_process < 3:
+            month_name = current_date.strftime("%B %Y")
+            
+            # Get month boundaries
+            month_start = current_date.replace(day=1)
+            days_in_month = monthrange(current_date.year, current_date.month)[1]
+            month_end = current_date.replace(day=days_in_month)
+            
+            # Generate start/mid/end options for this month
+            month_options = self._generate_options_for_month(
+                current_date, month_start, month_end, start_date, end_date, 
+                total_nights, destinations
+            )
+            
+            # Only add month if it has at least one option
+            if any(month_options.values()):
+                month_group = {
+                    "month": month_name,
+                    "start_month": month_options["start"],
+                    "mid_month": month_options["mid"], 
+                    "end_month": month_options["end"]
+                }
+                month_groups.append(month_group)
+                self.logger.debug(f"Added month group: {month_name}")
+            
+            # Move to next month
+            if current_date.month == 12:
+                current_date = current_date.replace(year=current_date.year + 1, month=1, day=1)
+            else:
+                current_date = current_date.replace(month=current_date.month + 1, day=1)
+            
+            months_to_process += 1
+        
+        return month_groups
+    
+    def _generate_options_for_month(
+        self,
+        current_month_date: date,
+        month_start: date,
+        month_end: date,
+        search_start: date,
+        search_end: date,
+        total_nights: int,
+        destinations: List[DestinationRequest]
+    ) -> Dict[str, Optional[Any]]:
+        """Generate start/mid/end options for a specific month"""
+        
+        options = {"start": None, "mid": None, "end": None}
+        
+        # Early month option (1st-10th)
+        early_start = max(month_start, search_start)
+        early_target = month_start.replace(day=min(5, month_start.day + 4))  # Around 5th
+        early_start = max(early_start, early_target)
+        
+        if early_start >= search_start and early_start + timedelta(days=total_nights - 1) <= search_end:
+            assignment = self._build_consecutive_assignment(destinations, early_start)
+            if assignment and assignment.end_date <= search_end:
+                assignment.label = f"{current_month_date.strftime('%B').lower()}_start"
+                options["start"] = assignment
+        
+        # Mid month option (11th-20th)  
+        mid_target = month_start.replace(day=15)
+        mid_start = max(mid_target, search_start)
+        
+        if mid_start >= search_start and mid_start + timedelta(days=total_nights - 1) <= search_end:
+            assignment = self._build_consecutive_assignment(destinations, mid_start)
+            if assignment and assignment.end_date <= search_end:
+                assignment.label = f"{current_month_date.strftime('%B').lower()}_mid"
+                options["mid"] = assignment
+        
+        # Late month option (21st-end)
+        late_target = month_start.replace(day=min(25, month_end.day))
+        late_start = max(late_target, search_start)
+        
+        if late_start >= search_start and late_start + timedelta(days=total_nights - 1) <= search_end:
+            assignment = self._build_consecutive_assignment(destinations, late_start)
+            if assignment and assignment.end_date <= search_end:
+                assignment.label = f"{current_month_date.strftime('%B').lower()}_end"
+                options["end"] = assignment
+        
+        return options
+    
+    def _calculate_comprehensive_travel_options(
+        self, 
+        start_date: date, 
+        end_date: date, 
+        total_nights: int,
+        search_day: int,
+        days_in_month: int
+    ) -> List[Tuple[str, date]]:
+        """
+        Calculate comprehensive travel timing options covering current and next month.
+        
+        Strategy: Generate ALL viable weekly and monthly options rather than limiting to 3.
+        This provides better coverage of both current and next month opportunities.
+        
+        Returns list of (option_name, start_date) tuples
+        """
+        from calendar import monthrange
+        
+        options = []
+        
+        # Get key month boundaries
+        current_month_start = start_date.replace(day=1)
+        next_month_start = self._get_next_month_start(start_date)
+        
+        # Generate current month options (if there's still time)
+        current_month_options = self._generate_current_month_options(
+            start_date, end_date, total_nights, search_day, days_in_month
+        )
+        options.extend(current_month_options)
+        
+        # Generate next month options (comprehensive coverage)
+        next_month_options = self._generate_next_month_options(
+            start_date, end_date, total_nights, next_month_start
+        )
+        options.extend(next_month_options)
+        
+        # Generate additional weekly options within valid periods
+        weekly_options = self._generate_weekly_options(
+            start_date, end_date, total_nights, search_day
+        )
+        options.extend(weekly_options)
+        
+        # Remove duplicates and ensure all options are viable
+        unique_options = []
+        seen_dates = set()
+        
+        for option_name, option_start in options:
+            if (option_start not in seen_dates and 
+                option_start >= start_date and 
+                option_start <= end_date - timedelta(days=total_nights - 1)):
+                unique_options.append((option_name, option_start))
+                seen_dates.add(option_start)
+        
+        # Sort by start date
+        unique_options.sort(key=lambda x: x[1])
+        
+        # Ensure we have at least one option
+        if not unique_options:
+            self.logger.warning("No comprehensive options found, adding fallback")
+            unique_options.append(("fallback_start", start_date))
+        
+        self.logger.info(f"Generated {len(unique_options)} comprehensive travel options")
+        return unique_options
+    
+    def _generate_current_month_options(
+        self, 
+        start_date: date, 
+        end_date: date, 
+        total_nights: int, 
+        search_day: int, 
+        days_in_month: int
+    ) -> List[Tuple[str, date]]:
+        """Generate all viable options within the current month"""
+        options = []
+        
+        # Immediate start (next few days)
+        if search_day <= 25:  # Only if not too late in month
+            immediate_start = start_date + timedelta(days=2)
+            if immediate_start.day + total_nights <= days_in_month + 3:  # Can finish in current month or early next
+                options.append(("current_immediate", immediate_start))
+        
+        # This weekend (if searching early/mid week)
+        if search_day <= 20:
+            # Find next weekend (Saturday)
+            days_until_saturday = (5 - start_date.weekday()) % 7
+            if days_until_saturday == 0:  # If today is Saturday
+                days_until_saturday = 7
+            weekend_start = start_date + timedelta(days=days_until_saturday)
+            if weekend_start.month == start_date.month:
+                options.append(("current_weekend", weekend_start))
+        
+        # Mid-month if not already past it
+        if search_day <= 12:
+            mid_month = start_date.replace(day=15)
+            options.append(("current_mid", mid_month))
+        
+        # End of current month
+        if search_day <= 22:
+            month_end_start = self._get_month_end_start(start_date, total_nights)
+            if month_end_start and month_end_start >= start_date:
+                options.append(("current_end", month_end_start))
+        
+        return options
+    
+    def _generate_next_month_options(
+        self, 
+        start_date: date, 
+        end_date: date, 
+        total_nights: int, 
+        next_month_start: date
+    ) -> List[Tuple[str, date]]:
+        """Generate comprehensive options for next month"""
+        options = []
+        
+        if next_month_start > end_date - timedelta(days=total_nights - 1):
+            return options  # Next month doesn't fit in date range
+        
+        # Start of next month
+        options.append(("next_start", next_month_start))
+        
+        # First weekend of next month
+        first_saturday = next_month_start + timedelta(days=(5 - next_month_start.weekday()) % 7)
+        if first_saturday == next_month_start:  # If 1st is Saturday
+            first_saturday += timedelta(days=7)
+        options.append(("next_first_weekend", first_saturday))
+        
+        # Mid next month
+        try:
+            next_mid = next_month_start.replace(day=15)
+            options.append(("next_mid", next_mid))
+        except:
+            pass
+        
+        # Third weekend of next month
+        third_saturday = next_month_start + timedelta(days=14 + (5 - next_month_start.weekday()) % 7)
+        options.append(("next_third_weekend", third_saturday))
+        
+        # End of next month
+        next_month_end_start = self._get_next_month_end_start(start_date, total_nights)
+        if next_month_end_start:
+            options.append(("next_end", next_month_end_start))
+        
+        return options
+    
+    def _generate_weekly_options(
+        self, 
+        start_date: date, 
+        end_date: date, 
+        total_nights: int, 
+        search_day: int
+    ) -> List[Tuple[str, date]]:
+        """Generate weekly interval options for better coverage"""
+        options = []
+        
+        # Generate options every 7 days starting from a logical point
+        current = start_date + timedelta(days=7 - (start_date.weekday() + 1) % 7)  # Next Monday
+        week_count = 1
+        
+        while current <= end_date - timedelta(days=total_nights - 1) and week_count <= 6:
+            options.append((f"week_{week_count}", current))
+            current += timedelta(days=7)
+            week_count += 1
+        
+        return options
+    
+    def _get_next_month_start(self, current_date: date) -> date:
+        """Get the 1st of next month"""
+        if current_date.month == 12:
+            return date(current_date.year + 1, 1, 1)
+        else:
+            return date(current_date.year, current_date.month + 1, 1)
+    
+    def _get_next_month_mid(self, current_date: date) -> Optional[date]:
+        """Get mid-point of next month (around 15th)"""
+        try:
+            next_month_start = self._get_next_month_start(current_date)
+            return next_month_start.replace(day=15)
+        except:
+            return None
+    
+    def _get_month_end_start(self, current_date: date, trip_nights: int) -> Optional[date]:
+        """Get start date for trip that ends at month end"""
+        from calendar import monthrange
+        try:
+            days_in_month = monthrange(current_date.year, current_date.month)[1]
+            # Start trip so it ends around last few days of month
+            end_of_month = current_date.replace(day=days_in_month)
+            trip_start = end_of_month - timedelta(days=trip_nights - 1)
+            return trip_start if trip_start >= current_date else None
+        except:
+            return None
+    
+    def _get_next_month_end_start(self, current_date: date, trip_nights: int) -> Optional[date]:
+        """Get start date for trip that ends at next month end"""
+        from calendar import monthrange
+        try:
+            next_month_start = self._get_next_month_start(current_date)
+            days_in_next_month = monthrange(next_month_start.year, next_month_start.month)[1]
+            end_of_next_month = next_month_start.replace(day=days_in_next_month)
+            trip_start = end_of_next_month - timedelta(days=trip_nights - 1)
+            return trip_start
+        except:
+            return None
     
     def generate_range_assignments(
         self,

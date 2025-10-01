@@ -79,7 +79,9 @@ class ItineraryOptimizationService:
             "fixed_dates": [d.isoformat() for d in (request.fixed_dates or [])],
             "guests": request.guests.model_dump(),
             "currency": request.currency,
-            "top_k": request.top_k
+            "top_k": request.top_k,
+            "preferred_hotels": sorted(request.preferred_hotels or []),
+            "hotel_change": request.hotel_change
         }
         
         request_json = json.dumps(request_dict, sort_keys=True)
@@ -144,12 +146,14 @@ class ItineraryOptimizationService:
             total_itineraries = 0
             
             # Count normal search results
-            if hasattr(result, 'normal') and result.normal:
-                normal_count = sum([
-                    1 for r in [result.normal.start_month, result.normal.mid_month, result.normal.end_month] 
-                    if r is not None
-                ])
-                total_itineraries += normal_count
+            if hasattr(result, 'normal') and result.normal and result.normal.monthly_options:
+                for month_option in result.normal.monthly_options:
+                    if month_option.start_month:
+                        total_itineraries += 1
+                    if month_option.mid_month:
+                        total_itineraries += 1
+                    if month_option.end_month:
+                        total_itineraries += 1
             
             # Count ranges search results
             if hasattr(result, 'ranges') and result.ranges and result.ranges.results:
@@ -181,12 +185,17 @@ class ItineraryOptimizationService:
         
         normal_results = await self._execute_normal_search(request)
         
-        # Find best overall itinerary
-        best_itinerary = self._find_best_itinerary([
-            normal_results.start_month,
-            normal_results.mid_month,
-            normal_results.end_month
-        ])
+        # Find best overall itinerary from monthly options
+        all_options = []
+        for month_option in normal_results.monthly_options:
+            if month_option.start_month:
+                all_options.append(month_option.start_month)
+            if month_option.mid_month:
+                all_options.append(month_option.mid_month)
+            if month_option.end_month:
+                all_options.append(month_option.end_month)
+        
+        best_itinerary = self._find_best_itinerary(all_options)
         
         metadata = OptimizationMetadata(
             processing_time_ms=0,  # Will be updated by caller
@@ -194,11 +203,7 @@ class ItineraryOptimizationService:
             hotels_searched=0,  # TODO: Track this
             price_queries=0,     # TODO: Track this
             alternatives_generated=sum([
-                r.alternatives_generated for r in [
-                    normal_results.start_month,
-                    normal_results.mid_month,
-                    normal_results.end_month
-                ] if r
+                r.alternatives_generated for r in all_options if r
             ]),
             best_cost_found=best_itinerary.total_cost if best_itinerary else None
         )
@@ -215,7 +220,7 @@ class ItineraryOptimizationService:
                 "currency": request.currency,
                 "guests": request.guests.model_dump()
             },
-            message=f"Found {len([r for r in [normal_results.start_month, normal_results.mid_month, normal_results.end_month] if r])} itinerary options"
+            message=f"Found {len(all_options)} itinerary options across {len(normal_results.monthly_options)} months"
         )
     
     async def _optimize_custom_search(
@@ -233,11 +238,14 @@ class ItineraryOptimizationService:
         for search_type in request.search_types:
             if search_type == "normal":
                 results["normal"] = await self._execute_normal_search(request)
-                all_itineraries.extend([
-                    results["normal"].start_month,
-                    results["normal"].mid_month,
-                    results["normal"].end_month
-                ])
+                # Add all options from monthly_options to all_itineraries
+                for month_option in results["normal"].monthly_options:
+                    if month_option.start_month:
+                        all_itineraries.append(month_option.start_month)
+                    if month_option.mid_month:
+                        all_itineraries.append(month_option.mid_month)
+                    if month_option.end_month:
+                        all_itineraries.append(month_option.end_month)
             
             elif search_type == "ranges":
                 if request.ranges:
@@ -252,11 +260,14 @@ class ItineraryOptimizationService:
             elif search_type == "all":
                 # Execute all search types
                 results["normal"] = await self._execute_normal_search(request)
-                all_itineraries.extend([
-                    results["normal"].start_month,
-                    results["normal"].mid_month,
-                    results["normal"].end_month
-                ])
+                # Add all options from monthly_options to all_itineraries
+                for month_option in results["normal"].monthly_options:
+                    if month_option.start_month:
+                        all_itineraries.append(month_option.start_month)
+                    if month_option.mid_month:
+                        all_itineraries.append(month_option.mid_month)
+                    if month_option.end_month:
+                        all_itineraries.append(month_option.end_month)
                 
                 # Auto-generate ranges from global_date_range if not provided
                 if request.ranges:
@@ -314,30 +325,72 @@ class ItineraryOptimizationService:
         self, 
         request: ItineraryOptimizationRequest
     ) -> NormalSearchResults:
-        """Execute normal search (start/mid/end of month)"""
+        """Execute normal search with month-grouped future-only results"""
         
-        # Generate monthly slice assignments
-        assignments = self._date_service.generate_monthly_slices(
+        self.logger.info(f"🔍 NORMAL SEARCH: Starting normal search execution")
+        self.logger.info(f"🔍 NORMAL SEARCH: Request destinations: {[d.model_dump() for d in request.destinations]}")
+        self.logger.info(f"🔍 NORMAL SEARCH: Global date range: {request.global_date_range.model_dump()}")
+        self.logger.info(f"🔍 NORMAL SEARCH: Currency: {request.currency}")
+        self.logger.info(f"🔍 NORMAL SEARCH: Guests: {request.guests.model_dump()}")
+        
+        # Import the schema here to avoid circular imports
+        from app.schemas.itinerary import MonthlyOptions
+        
+        # Generate month-grouped assignments
+        self.logger.info(f"🔍 NORMAL SEARCH: Generating monthly slices...")
+        month_groups = self._date_service.generate_monthly_slices(
             request.global_date_range, request.destinations
         )
+        self.logger.info(f"🔍 NORMAL SEARCH: Generated {len(month_groups)} month groups: {[mg.get('month', 'Unknown') for mg in month_groups]}")
         
-        # Optimize each assignment
-        results = []
-        labels = ["start_month", "mid_month", "end_month"]
+        # Process each month group
+        monthly_options = []
+        all_available_options = []  # Track all options for debugging
         
-        for i, assignment in enumerate(assignments):
-            if i >= len(labels):
-                break
-                
-            itinerary = await self._optimize_single_assignment(
-                assignment, request, labels[i]
-            )
-            results.append(itinerary)
+        for month_group in month_groups:
+            month_name = month_group["month"]
+            
+            # Optimize each assignment in the month
+            optimized_month = {
+                "month": month_name,
+                "start_month": None,
+                "mid_month": None,
+                "end_month": None
+            }
+            
+            # Process start_month option
+            if month_group["start_month"]:
+                itinerary = await self._optimize_single_assignment(
+                    month_group["start_month"], request, f"{month_name}_start"
+                )
+                if itinerary:
+                    optimized_month["start_month"] = itinerary
+                    all_available_options.append(itinerary)
+            
+            # Process mid_month option
+            if month_group["mid_month"]:
+                itinerary = await self._optimize_single_assignment(
+                    month_group["mid_month"], request, f"{month_name}_mid"
+                )
+                if itinerary:
+                    optimized_month["mid_month"] = itinerary
+                    all_available_options.append(itinerary)
+            
+            # Process end_month option
+            if month_group["end_month"]:
+                itinerary = await self._optimize_single_assignment(
+                    month_group["end_month"], request, f"{month_name}_end"
+                )
+                if itinerary:
+                    optimized_month["end_month"] = itinerary
+                    all_available_options.append(itinerary)
+            
+            # Only add month if it has at least one successful optimization
+            if any([optimized_month["start_month"], optimized_month["mid_month"], optimized_month["end_month"]]):
+                monthly_options.append(MonthlyOptions(**optimized_month))
         
         return NormalSearchResults(
-            start_month=results[0] if len(results) > 0 else None,
-            mid_month=results[1] if len(results) > 1 else None,
-            end_month=results[2] if len(results) > 2 else None
+            monthly_options=monthly_options
         )
     
     async def _execute_ranges_search(
@@ -402,7 +455,8 @@ class ItineraryOptimizationService:
             
             # Get hotel solutions for all destinations
             hotel_solutions = await self._pricing_service.optimize_complete_itinerary(
-                assignment, destination_configs, request.guests, request.currency
+                assignment, destination_configs, request.guests, request.currency,
+                request.preferred_hotels, request.hotel_change
             )
             
             if not hotel_solutions:

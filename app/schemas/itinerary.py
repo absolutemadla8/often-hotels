@@ -78,6 +78,10 @@ class ItineraryOptimizationRequest(BaseModel):
     currency: str = Field("USD", min_length=3, max_length=3, description="Preferred currency")
     top_k: int = Field(3, ge=1, le=10, description="Top itineraries per search type")
     
+    # Hotel preferences
+    preferred_hotels: Optional[List[int]] = Field(None, description="Preferred hotel IDs to prioritize")
+    hotel_change: bool = Field(False, description="Allow hotel changes for cost optimization")
+    
     # Performance options
     use_cache: bool = Field(True, description="Use cached results if available")
     max_optimization_time_ms: Optional[int] = Field(30000, description="Max optimization time")
@@ -111,6 +115,56 @@ class ItineraryOptimizationRequest(BaseModel):
             if not v:
                 raise ValueError("Fixed dates must be provided for fixed_dates search")
         return v
+    
+    model_config = ConfigDict(from_attributes=True)
+
+
+# Hotel Search Schemas
+class HotelSearchRequest(BaseModel):
+    """Request for hotel search by destination and date range"""
+    destination_id: int = Field(..., gt=0, description="Destination ID")
+    area_id: Optional[int] = Field(None, gt=0, description="Optional area ID within destination")
+    start_date: date = Field(..., description="Start date for availability check")
+    end_date: date = Field(..., description="End date for availability check")
+    currency: str = Field("USD", min_length=3, max_length=3, description="Preferred currency")
+    
+    @field_validator('end_date')
+    @classmethod
+    def validate_end_after_start(cls, v, info):
+        if v and info.data.get('start_date') and v <= info.data['start_date']:
+            raise ValueError('End date must be after start date')
+        return v
+    
+    model_config = ConfigDict(from_attributes=True)
+
+
+class HotelAvailabilityInfo(BaseModel):
+    """Hotel availability and pricing information"""
+    hotel_id: int = Field(..., description="Hotel ID")
+    hotel_name: str = Field(..., description="Hotel name")
+    star_rating: Optional[float] = Field(None, description="Hotel star rating")
+    guest_rating: Optional[float] = Field(None, description="Guest rating")
+    available_dates: List[date] = Field(..., description="Dates with available pricing")
+    price_range: Dict[str, Decimal] = Field(..., description="Min and max prices")
+    avg_price: Decimal = Field(..., description="Average price per night")
+    total_nights_available: int = Field(..., description="Number of nights available in range")
+    covers_full_range: bool = Field(..., description="True if hotel covers entire date range")
+    currency: str = Field(..., description="Price currency")
+    
+    model_config = ConfigDict(from_attributes=True)
+
+
+class HotelSearchResponse(BaseModel):
+    """Response for hotel search"""
+    destination_id: int = Field(..., description="Destination ID")
+    destination_name: str = Field(..., description="Destination name")
+    area_id: Optional[int] = Field(None, description="Area ID if specified")
+    area_name: Optional[str] = Field(None, description="Area name if specified")
+    date_range: DateRange = Field(..., description="Requested date range")
+    currency: str = Field(..., description="Price currency")
+    total_hotels_found: int = Field(..., description="Total hotels with availability")
+    hotels_full_coverage: int = Field(..., description="Hotels covering entire date range")
+    hotels: List[HotelAvailabilityInfo] = Field(..., description="Available hotels")
     
     model_config = ConfigDict(from_attributes=True)
 
@@ -177,11 +231,19 @@ class ItineraryResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
 
+class MonthlyOptions(BaseModel):
+    """Options for a specific month with future-only data"""
+    month: str = Field(..., description="Month name (e.g., 'November 2025')")
+    start_month: Optional[ItineraryResponse] = Field(None, description="Early month option (null if past)")
+    mid_month: Optional[ItineraryResponse] = Field(None, description="Mid-month option (null if past)")
+    end_month: Optional[ItineraryResponse] = Field(None, description="Late month option (null if past)")
+    
+    model_config = ConfigDict(from_attributes=True)
+
+
 class NormalSearchResults(BaseModel):
-    """Results from normal search (start/mid/end month)"""
-    start_month: Optional[ItineraryResponse] = Field(None, description="Start of month itinerary")
-    mid_month: Optional[ItineraryResponse] = Field(None, description="Mid-month itinerary")
-    end_month: Optional[ItineraryResponse] = Field(None, description="End of month itinerary")
+    """Results from normal search with month-grouped future-only options"""
+    monthly_options: List[MonthlyOptions] = Field(default_factory=list, description="Options grouped by month")
     
     model_config = ConfigDict(from_attributes=True)
 

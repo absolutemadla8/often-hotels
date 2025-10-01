@@ -282,7 +282,7 @@ class HotelTrackingService:
             try:
                 # Search hotels for this date range
                 day_result = await self.search_and_update_hotels(
-                    destination, checkin_date, checkout_date
+                    destination, checkin_date, checkout_date, area=None
                 )
                 
                 hotels_discovered += day_result['hotels_processed']
@@ -494,7 +494,8 @@ class HotelTrackingService:
         self, 
         destination: Destination, 
         checkin_date: date, 
-        checkout_date: date
+        checkout_date: date,
+        area: Area = None
     ) -> Dict[str, Any]:
         """
         Search hotels for a specific date range and update database
@@ -503,6 +504,7 @@ class HotelTrackingService:
             destination: Destination to search in
             checkin_date: Check-in date
             checkout_date: Check-out date
+            area: Optional area for more specific search
             
         Returns:
             Summary of search and update operation
@@ -550,9 +552,12 @@ class HotelTrackingService:
         # Process each property result (all hotels from pagination)
         for property_result in search_response.properties:
             try:
-                # Skip hotels without star rating (shouldn't happen with our filters, but safety check)
-                if property_result.extracted_hotel_class is None:
-                    logger.warning(f"Skipping {property_result.name} - no star rating available")
+                # Handle hotels with missing star rating data
+                # Since SerpAPI hotel_class filter ensures only 4-5 star hotels are returned,
+                # hotels with missing extracted_hotel_class are still valid
+                star_rating = self._extract_hotel_star_rating(property_result)
+                if star_rating is None:
+                    logger.debug(f"Skipping {property_result.name} - unable to determine star rating")
                     continue
                 
                 # Create or update hotel
@@ -713,11 +718,14 @@ class HotelTrackingService:
         # Process each property result (all hotels from pagination)
         for i, property_result in enumerate(search_response.properties):
             try:
-                # Skip hotels without star rating (shouldn't happen with our filters, but safety check)
-                if property_result.extracted_hotel_class is None:
-                    await task_instance.log_warning(
+                # Handle hotels with missing star rating data
+                # Since SerpAPI hotel_class filter ensures only 4-5 star hotels are returned,
+                # hotels with missing extracted_hotel_class are still valid
+                star_rating = self._extract_hotel_star_rating(property_result)
+                if star_rating is None:
+                    await task_instance.log_debug(
                         task_id,
-                        f"Skipping {property_result.name} - no star rating available",
+                        f"Skipping {property_result.name} - unable to determine star rating",
                         phase="hotel_processing",
                         metadata={"hotel_name": property_result.name}
                     )
@@ -818,7 +826,7 @@ class HotelTrackingService:
             "area": area,
             "hotel_type": HotelType.HOTEL,
             "hotel_chain": HotelChain.INDEPENDENT,
-            "star_rating": property_result.extracted_hotel_class,
+            "star_rating": self._extract_hotel_star_rating(property_result),
             "official_rating": property_result.hotel_class,  # "5-star hotel", "4-star hotel", etc.
             "guest_rating": property_result.overall_rating,
             "guest_rating_count": property_result.reviews or 0,
@@ -900,13 +908,14 @@ class HotelTrackingService:
         logger.info(f"Found price for {hotel.name}: {price} {tracking_config.DEFAULT_CURRENCY} (source: {price_source})")
         
         # Check for existing record - each day should be a separate record
-        # The key is: hotel + price_date + search criteria (checkin/checkout dates)
+        # The key is: hotel + price_date (TODAY) + search criteria (travel dates)
+        today = datetime.utcnow().date()
         existing_record = await UniversalPriceHistory.get_or_none(
             trackable_type=TrackableType.HOTEL_ROOM,
             trackable_id=hotel.id,
-            price_date=checkin_date,
-            search_date=checkin_date,
-            search_end_date=criteria.check_out_date,
+            price_date=today,  # When we searched (today)
+            search_date=checkin_date,  # Travel check-in date
+            search_end_date=criteria.check_out_date,  # Travel check-out date
             data_source=tracking_config.DATA_SOURCE_NAME
         )
         
@@ -943,9 +952,9 @@ class HotelTrackingService:
         price_data = {
             "trackable_type": TrackableType.HOTEL_ROOM,
             "trackable_id": hotel.id,
-            "price_date": checkin_date,
-            "search_date": checkin_date,
-            "search_end_date": criteria.check_out_date,
+            "price_date": today,  # When we searched (today)
+            "search_date": checkin_date,  # Travel check-in date
+            "search_end_date": criteria.check_out_date,  # Travel check-out date
             "price": price,
             "currency": tracking_config.DEFAULT_CURRENCY,
             "is_available": True,
@@ -1008,6 +1017,40 @@ class HotelTrackingService:
             # Don't re-raise - continue processing other hotels
             return False
     
+    def _extract_hotel_star_rating(self, property_result: PropertyResult) -> Optional[int]:
+        """
+        Extract hotel star rating from property result.
+        
+        Tries multiple sources:
+        1. extracted_hotel_class (preferred)
+        2. hotel_class string parsing (e.g., "4-star hotel" -> 4)
+        3. Default to 4 for hotels that passed SerpAPI filter but have missing data
+        
+        Args:
+            property_result: SerpAPI property result
+            
+        Returns:
+            Star rating (4 or 5) or None if unable to determine
+        """
+        # Try extracted_hotel_class first (most reliable)
+        if property_result.extracted_hotel_class is not None:
+            return property_result.extracted_hotel_class
+        
+        # Try to parse from hotel_class string
+        if property_result.hotel_class:
+            import re
+            # Look for patterns like "4-star hotel", "5 star", etc.
+            match = re.search(r'(\d+)[-\s]*star', property_result.hotel_class.lower())
+            if match:
+                rating = int(match.group(1))
+                if rating in [4, 5]:  # Only accept 4-5 star
+                    return rating
+        
+        # Since the hotel passed SerpAPI's hotel_class=4,5 filter,
+        # it must be a 4 or 5 star hotel. Default to 4 as conservative estimate.
+        logger.info(f"Hotel {property_result.name} passed 4-5 star filter but has missing rating data, defaulting to 4-star")
+        return 4
+
     async def get_tracking_summary(self) -> Dict[str, Any]:
         """
         Get summary of current tracking configuration and status

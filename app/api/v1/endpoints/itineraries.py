@@ -7,6 +7,7 @@ flexible search modes and hotel cost minimization.
 
 from typing import Optional, Dict, Any
 from fastapi import APIRouter, Depends, HTTPException, status, BackgroundTasks
+from fastapi.responses import JSONResponse
 import logging
 
 from app.api.tortoise_deps import get_current_active_user
@@ -18,18 +19,19 @@ from app.schemas.itinerary import (
     ItineraryOptimizationRequest, ItineraryOptimizationResponse,
     ItineraryErrorResponse
 )
+from app.core.data_filter import create_filtered_response
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
 
 
-@router.post("/optimize", response_model=ItineraryOptimizationResponse)
+@router.post("/optimize")
 async def optimize_itinerary(
     request: ItineraryOptimizationRequest,
     background_tasks: BackgroundTasks,
     # current_user: User = Depends(get_current_active_user),  # Temporarily disabled for testing
     optimization_service: ItineraryOptimizationService = Depends(get_itinerary_optimization_service)
-) -> ItineraryOptimizationResponse:
+) -> JSONResponse:
     """
     Optimize multi-destination itinerary with flexible search modes
     
@@ -120,7 +122,12 @@ async def optimize_itinerary(
         else:
             logger.warning(f"Optimization failed for user {user_id}")
         
-        return result
+        # Apply user access filtering
+        return create_filtered_response(
+            data=result.model_dump(),
+            user=current_user,
+            endpoint_path="/itineraries/optimize"
+        )
         
     except HTTPException:
         raise
