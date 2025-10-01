@@ -111,7 +111,8 @@ def create_application() -> FastAPI:
 
     # Security middleware
     app.add_middleware(SecurityHeadersMiddleware)
-    app.add_middleware(TrustedHostMiddleware, allowed_hosts=["localhost", "127.0.0.1", "0.0.0.0"])
+    # Temporarily disable TrustedHostMiddleware for hosting flexibility
+    # app.add_middleware(TrustedHostMiddleware, allowed_hosts=["localhost", "127.0.0.1", "0.0.0.0", "*"])
     
     # Logging middleware (temporarily disabled due to config issues)
     # app.add_middleware(RequestLoggingMiddleware)
