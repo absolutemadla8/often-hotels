@@ -232,18 +232,21 @@ class ItineraryResponse(BaseModel):
 
 
 class MonthlyOptions(BaseModel):
-    """Options for a specific month with future-only data"""
-    month: str = Field(..., description="Month name (e.g., 'November 2025')")
-    start_month: Optional[ItineraryResponse] = Field(None, description="Early month option (null if past)")
-    mid_month: Optional[ItineraryResponse] = Field(None, description="Mid-month option (null if past)")
-    end_month: Optional[ItineraryResponse] = Field(None, description="Late month option (null if past)")
+    """🆕 Clean monthly options structure - replaces legacy start/mid/end month fields"""
+    month: str = Field(..., description="Month name (e.g., 'December 2025')")
+    start_month: Optional[ItineraryResponse] = Field(None, description="Early month option (null if past or for anonymous users)")
+    mid_month: Optional[ItineraryResponse] = Field(None, description="Mid-month option (null if past or for anonymous users)")
+    end_month: Optional[ItineraryResponse] = Field(None, description="Late month option (null if past or for anonymous users)")
     
     model_config = ConfigDict(from_attributes=True)
 
 
 class NormalSearchResults(BaseModel):
-    """Results from normal search with month-grouped future-only options"""
-    monthly_options: List[MonthlyOptions] = Field(default_factory=list, description="Options grouped by month")
+    """🆕 Clean month-grouped results with unified structure"""
+    monthly_options: List[MonthlyOptions] = Field(
+        default_factory=list, 
+        description="Clean monthly options array - replaces legacy start_month/mid_month/end_month fields. Anonymous users get single nearest option only."
+    )
     
     model_config = ConfigDict(from_attributes=True)
 
@@ -270,6 +273,9 @@ class OptimizationMetadata(BaseModel):
     price_queries: int = Field(0, description="Total price queries made")
     alternatives_generated: int = Field(0, description="Total alternatives generated")
     best_cost_found: Optional[Decimal] = Field(None, description="Best total cost found")
+    user_authenticated: bool = Field(False, description="Whether user was authenticated")
+    clean_structure_used: bool = Field(True, description="Whether new clean monthly_options structure was used")
+    nearest_option_shown: Optional[bool] = Field(None, description="Whether single nearest option was shown (for anonymous users)")
     
     model_config = ConfigDict(from_attributes=True)
 

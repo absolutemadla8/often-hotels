@@ -25,7 +25,22 @@ class Settings(BaseSettings):
         raise ValueError(v)
 
     PROJECT_NAME: str = "Often Hotels API"
-    API_DESCRIPTION: str = "Robust and scalable hotel booking API with authentication"
+    API_DESCRIPTION: str = """Robust and scalable hotel booking API with multi-destination itinerary optimization
+
+🆕 **Recent Updates:**
+- Clean month-grouped structure with unified `monthly_options` 
+- Anonymous user support with smart data filtering
+- Enhanced price tracking with proper date logic
+- Multi-currency support (INR, USD, EUR, etc.)
+- Optimized hotel search with comprehensive debug logging
+
+**Key Features:**
+- Multi-destination itinerary optimization
+- Hotel cost minimization with single-hotel preference
+- Flexible search modes (normal, ranges, fixed_dates)
+- Redis caching for improved performance
+- Real-time hotel price tracking with SerpAPI
+- Background job processing with Celery"""
     API_VERSION: str = "1.0.0"
     
     # Database

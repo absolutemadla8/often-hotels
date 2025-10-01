@@ -35,12 +35,17 @@ async def optimize_itinerary(
     """
     Optimize multi-destination itinerary with flexible search modes
     
+    ## 🆕 Clean Month-Grouped Structure
+    - Returns unified `monthly_options` array (no legacy start/mid/end month fields)
+    - Anonymous users get single nearest option with "Sign in to see all options" message
+    - Authenticated users get all available monthly options
+    
     **Search Modes:**
-    - `custom=false`: Normal search only (start/mid/end of month)
+    - `custom=false`: Normal search with clean monthly options structure
     - `custom=true` + `search_types`: Custom search modes
     
     **Search Types:**
-    - `"normal"`: Generate start/mid/end month itineraries
+    - `"normal"`: Generate monthly options with optimized date windows
     - `"ranges"`: Sliding window across provided date ranges
     - `"fixed_dates"`: Exact start dates optimization
     - `"all"`: All search types combined
@@ -48,30 +53,48 @@ async def optimize_itinerary(
     **Optimization Features:**
     - Consecutive destination visits in specified order
     - Hotel cost minimization with single-hotel preference
-    - Multi-currency support with conversion
+    - Multi-currency support (INR, USD, EUR, etc.)
     - Redis caching for improved performance
+    - Anonymous user data filtering
     - Comprehensive optimization metadata
     
-    **Example Request:**
+    **Example Request (Authenticated User):**
     ```json
     {
-      "custom": true,
-      "search_types": ["normal", "ranges"],
+      "custom": false,
       "destinations": [
-        {"destination_id": 101, "nights": 2},
-        {"destination_id": 102, "nights": 3}
+        {"destination_id": 5, "area_id": 1, "nights": 3},
+        {"destination_id": 5, "area_id": 2, "nights": 2}
       ],
       "global_date_range": {
-        "start": "2025-11-01",
-        "end": "2025-11-30"
+        "start": "2025-12-01",
+        "end": "2025-12-31"
       },
-      "ranges": [
-        {"start": "2025-11-01", "end": "2025-11-15"},
-        {"start": "2025-11-15", "end": "2025-11-30"}
-      ],
       "guests": {"adults": 2, "children": 0},
-      "currency": "USD",
-      "top_k": 3
+      "currency": "INR"
+    }
+    ```
+    
+    **Example Response (Clean Structure):**
+    ```json
+    {
+      "success": true,
+      "normal": {
+        "monthly_options": [
+          {
+            "search_type": "normal",
+            "label": "December 2025",
+            "start_month": "2025-12-01",
+            "destinations": [...],
+            "total_cost": 28800.00,
+            "currency": "INR"
+          }
+        ]
+      },
+      "metadata": {
+        "user_authenticated": true,
+        "clean_structure_used": true
+      }
     }
     ```
     """
