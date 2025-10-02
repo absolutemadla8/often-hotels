@@ -8,9 +8,9 @@ services:
       - "8006:8000"
     environment:
       # Database - using Docker PostgreSQL container
-      - DATABASE_URL=${DATABASE_URL}
+      - DATABASE_URL=postgres://postgres:password@db:5432/often_hotels
       # Redis - using Docker Redis container  
-      - REDIS_URL=${REDIS_URL}
+      - REDIS_URL=redis://redis:6379/0
       # Security
       - SECRET_KEY=${SECRET_KEY:-your-secret-key-here}
       # SerpAPI
@@ -77,9 +77,9 @@ services:
     command: celery -A app.core.celery_app:celery_app worker --loglevel=info --concurrency=1 --pool=solo
     environment:
       # Database - using Docker PostgreSQL container
-      - DATABASE_URL=${DATABASE_URL}
+      - DATABASE_URL=postgres://postgres:password@db:5432/often_hotels
       # Redis - using Docker Redis container  
-      - REDIS_URL=${REDIS_URL}
+      - REDIS_URL=redis://redis:6379/0
       # Security
       - SECRET_KEY=${SECRET_KEY:-your-secret-key-here}
       # SerpAPI
@@ -107,9 +107,9 @@ services:
     command: celery -A app.core.celery_app:celery_app beat --loglevel=info --schedule=/app/celerybeat/celerybeat-schedule
     environment:
       # Database - using Docker PostgreSQL container
-      - DATABASE_URL=${DATABASE_URL}
+      - DATABASE_URL=postgres://postgres:password@db:5432/often_hotels
       # Redis - using Docker Redis container  
-      - REDIS_URL=${REDIS_URL}
+      - REDIS_URL=redis://redis:6379/0
       # Security
       - SECRET_KEY=${SECRET_KEY:-your-secret-key-here}
       # SerpAPI
@@ -140,9 +140,9 @@ services:
       - "5559:5555"
     environment:
       # Database - using Docker PostgreSQL container
-      - DATABASE_URL=${DATABASE_URL}
+      - DATABASE_URL=postgres://postgres:password@db:5432/often_hotels
       # Redis - using Docker Redis container  
-      - REDIS_URL=${REDIS_URL}
+      - REDIS_URL=redis://redis:6379/0
       # Security
       - SECRET_KEY=${SECRET_KEY:-your-secret-key-here}
       # SerpAPI

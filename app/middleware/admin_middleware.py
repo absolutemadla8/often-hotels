@@ -122,14 +122,7 @@ class AdminMiddleware:
 
 
 # Convenience function for creating admin dependency
-def get_admin_user() -> Callable:
-    """
-    Get admin user dependency for FastAPI endpoints
-    
-    Returns:
-        Dependency function that verifies admin access
-    """
-    return Depends(verify_admin_access)
+get_admin_user = verify_admin_access
 
 
 # Decorator for admin endpoints

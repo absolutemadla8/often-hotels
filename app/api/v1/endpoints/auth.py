@@ -77,8 +77,14 @@ async def login(
         user_agent = request.headers.get("user-agent")
         ip_address = request.client.host if request.client else None
 
-        # Create tokens
-        access_token_expires = timedelta(minutes=settings.ACCESS_TOKEN_EXPIRE_MINUTES)
+        # Create tokens - give admin user 1-year token, others get default
+        if user.email == "trippy@oftenhotels.com" and user.is_superuser:
+            # 1-year token for admin user
+            access_token_expires = timedelta(days=365)
+        else:
+            # Default token duration for regular users
+            access_token_expires = timedelta(minutes=settings.ACCESS_TOKEN_EXPIRE_MINUTES)
+        
         access_token = security.create_access_token(
             data={"sub": str(user.id)}, expires_delta=access_token_expires
         )
@@ -98,11 +104,17 @@ async def login(
             ip_address=ip_address
         )
 
+        # Calculate expires_in based on actual token duration
+        if user.email == "trippy@oftenhotels.com" and user.is_superuser:
+            expires_in_seconds = 365 * 24 * 60 * 60  # 1 year in seconds
+        else:
+            expires_in_seconds = settings.ACCESS_TOKEN_EXPIRE_MINUTES * 60  # Default in seconds
+            
         return {
             "access_token": access_token,
             "refresh_token": refresh_token,
             "token_type": "bearer",
-            "expires_in": settings.ACCESS_TOKEN_EXPIRE_MINUTES * 60
+            "expires_in": expires_in_seconds
         }
     except Exception as e:
         if isinstance(e, HTTPException):
