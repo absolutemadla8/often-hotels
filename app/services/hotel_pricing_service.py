@@ -75,38 +75,54 @@ class HotelPricingService:
             List of hotel price data objects
         """
         start_date, end_date = date_range
+        print(f"🚨🚨🚨 HOTEL PRICING METHOD CALLED: dest={destination_id}, area={area_id}, dates={start_date}-{end_date}, currency={currency}")
         self.logger.info(f"🔍 HOTEL PRICING: Starting search for destination_id={destination_id}, area_id={area_id}, dates={start_date} to {end_date}, currency={currency}")
         
         # Build query for hotels
         hotel_query = Hotel.filter(destination_id=destination_id, is_active=True)
+        print(f"🚨🚨🚨 HOTEL QUERY: Built base query for destination_id={destination_id}, is_active=True")
         self.logger.info(f"🔍 HOTEL PRICING: Built base query for destination_id={destination_id}, is_active=True")
         
         if area_id:
             hotel_query = hotel_query.filter(area_id=area_id)
+            print(f"🚨🚨🚨 HOTEL QUERY: Added area_id filter: area_id={area_id}")
             self.logger.info(f"🔍 HOTEL PRICING: Added area_id filter: area_id={area_id}")
         
         # Get hotels in the destination/area
+        print(f"🚨🚨🚨 HOTEL QUERY: About to execute hotel query with limit 100...")
         self.logger.info(f"🔍 HOTEL PRICING: Executing hotel query with limit 100...")
         hotels = await hotel_query.limit(100).all()  # Reasonable limit for optimization
+        print(f"🚨🚨🚨 HOTEL QUERY: Found {len(hotels)} hotels from query")
         self.logger.info(f"🔍 HOTEL PRICING: Found {len(hotels)} hotels from query")
         
         if not hotels:
+            print(f"🚨🚨🚨 EARLY RETURN: No hotels found, returning empty list")
             self.logger.warning(f"❌ HOTEL PRICING: No hotels found for destination {destination_id}, area {area_id}")
             return []
         
+        print(f"🚨🚨🚨 AFTER HOTEL CHECK: Hotels found, continuing processing")
         # Log first few hotel details for debugging
         for i, hotel in enumerate(hotels[:3]):
             self.logger.info(f"🔍 HOTEL PRICING: Hotel {i+1}: id={hotel.id}, name='{hotel.name}', destination_id={hotel.destination_id}, area_id={getattr(hotel, 'area_id', 'None')}")
         
         hotel_ids = [hotel.id for hotel in hotels]
+        print(f"🚨🚨🚨 HOTEL IDS: Created list of {len(hotel_ids)} hotel IDs")
         self.logger.info(f"🔍 HOTEL PRICING: Hotel IDs to fetch prices for: {hotel_ids[:10]}{'...' if len(hotel_ids) > 10 else ''}")
         
         # Fetch price data from UniversalPriceHistory
+        print(f"🚨🚨🚨 BEFORE PRICE FETCH: About to start price fetching section")
+        print(f"🚨🚨🚨 PRICE DATA: About to fetch price data for {len(hotel_ids)} hotels")
         self.logger.info(f"🔍 HOTEL PRICING: Fetching price data from UniversalPriceHistory...")
-        price_data = await self._fetch_price_data(
-            hotel_ids, start_date, end_date, currency
-        )
-        self.logger.info(f"🔍 HOTEL PRICING: Price data fetched - found data for {len(price_data)} hotels")
+        try:
+            price_data = await self._fetch_price_data(
+                hotel_ids, start_date, end_date, currency
+            )
+            print(f"🚨🚨🚨 PRICE DATA: Fetched price data for {len(price_data)} hotels")
+            self.logger.info(f"🔍 HOTEL PRICING: Price data fetched - found data for {len(price_data)} hotels")
+        except Exception as e:
+            print(f"🚨🚨🚨 PRICE DATA ERROR: Exception in _fetch_price_data: {e}")
+            self.logger.error(f"Error fetching price data: {e}")
+            return []
         
         # Convert to HotelPriceData objects
         hotel_price_objects = []
@@ -175,8 +191,10 @@ class HotelPricingService:
             is_available=True
         ).order_by('trackable_id', 'price_date', '-recorded_at')
         
+        print(f"🚨🚨🚨 PRICE QUERY: About to execute price query...")
         self.logger.info(f"🔍 PRICE FETCH: Executing price query...")
         price_records = await price_query.all()
+        print(f"🚨🚨🚨 PRICE QUERY: Found {len(price_records)} price records")
         self.logger.info(f"🔍 PRICE FETCH: Found {len(price_records)} price records")
         
         if len(price_records) > 0:
@@ -235,6 +253,7 @@ class HotelPricingService:
         Returns:
             Optimal hotel solution or None if no solution found
         """
+        print(f"🚨🚨🚨 OPTIMIZE_DESTINATION_HOTELS CALLED: dest={destination_id}, dates={date_assignments}, hotel_data_len={len(hotel_price_data) if hotel_price_data else 0}")
         self.logger.info(f"🔍 OPTIMIZATION: Starting hotel optimization for destination {destination_id}")
         self.logger.info(f"🔍 OPTIMIZATION: Date assignments: {date_assignments}")
         self.logger.info(f"🔍 OPTIMIZATION: Hotel price data count: {len(hotel_price_data) if hotel_price_data else 0}")
@@ -576,6 +595,7 @@ class HotelPricingService:
         preferred_hotels: Optional[List[int]] = None,
         hotel_change: bool = False
     ) -> Dict[int, DestinationHotelSolution]:
+        print(f"🚨🚨🚨 OPTIMIZE_COMPLETE_ITINERARY CALLED: destinations={destinations}, currency={currency}")
         """
         Optimize hotel selections for an entire itinerary.
         
@@ -609,9 +629,11 @@ class HotelPricingService:
                 current_date += timedelta(days=1)
             
             # Get hotel price data
+            print(f"🚨🚨🚨 ABOUT TO CALL get_hotel_prices_for_destination: dest_id={dest_id}, area_id={area_id}, start={start_date}, end={end_date}, currency={currency}")
             hotel_price_data = await self.get_hotel_prices_for_destination(
                 dest_id, area_id, (start_date, end_date), guest_config, currency
             )
+            print(f"🚨🚨🚨 RETURNED FROM get_hotel_prices_for_destination: got {len(hotel_price_data)} hotels")
             
             # Optimize hotel selection
             solution = self.optimize_destination_hotels(

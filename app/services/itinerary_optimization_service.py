@@ -442,6 +442,7 @@ class ItineraryOptimizationService:
         label: str
     ) -> Optional[ItineraryResponse]:
         """Optimize a single date assignment with hotel selection"""
+        print(f"🚨🚨🚨 _OPTIMIZE_SINGLE_ASSIGNMENT CALLED: label={label}, assignment={assignment}, currency={request.currency}")
         
         try:
             # Convert destinations to format expected by pricing service
