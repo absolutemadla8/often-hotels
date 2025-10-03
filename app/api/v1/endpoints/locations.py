@@ -22,7 +22,7 @@ async def search_locations(
     page: int = Query(1, ge=1, le=1000, description="Page number"),
     per_page: int = Query(20, ge=1, le=100, description="Results per page"),
     type: Optional[Literal["destination", "area"]] = Query(None, description="Filter by location type"),
-    country_id: Optional[int] = Query(None, ge=1, description="Filter by country ID"),
+    country_iso: Optional[str] = Query(None, min_length=2, max_length=3, description="Filter by country ISO code (2 or 3 letter)"),
     tracking_only: bool = Query(False, description="Show only tracking-enabled locations"),
     search_service: LocationSearchService = Depends(get_location_search_service)
 ) -> LocationSearchResponse:
@@ -62,7 +62,7 @@ async def search_locations(
             page=page,
             per_page=per_page,
             location_type=type,
-            country_id=country_id,
+            country_iso=country_iso,
             tracking_only=tracking_only
         )
         
@@ -93,7 +93,7 @@ async def search_destinations_only(
     q: str = Query(..., min_length=2, max_length=100, description="Search keyword for destinations"),
     page: int = Query(1, ge=1, le=1000, description="Page number"),
     per_page: int = Query(20, ge=1, le=100, description="Results per page"),
-    country_id: Optional[int] = Query(None, ge=1, description="Filter by country ID"),
+    country_iso: Optional[str] = Query(None, min_length=2, max_length=3, description="Filter by country ISO code"),
     tracking_only: bool = Query(False, description="Show only tracking-enabled destinations"),
     search_service: LocationSearchService = Depends(get_location_search_service)
 ) -> LocationSearchResponse:
@@ -108,7 +108,7 @@ async def search_destinations_only(
         page=page,
         per_page=per_page,
         type="destination",
-        country_id=country_id,
+        country_iso=country_iso,
         tracking_only=tracking_only,
         search_service=search_service
     )
@@ -119,7 +119,7 @@ async def search_areas_only(
     q: str = Query(..., min_length=2, max_length=100, description="Search keyword for areas"),
     page: int = Query(1, ge=1, le=1000, description="Page number"),
     per_page: int = Query(20, ge=1, le=100, description="Results per page"),
-    country_id: Optional[int] = Query(None, ge=1, description="Filter by country ID"),
+    country_iso: Optional[str] = Query(None, min_length=2, max_length=3, description="Filter by country ISO code"),
     tracking_only: bool = Query(False, description="Show only tracking-enabled areas"),
     search_service: LocationSearchService = Depends(get_location_search_service)
 ) -> LocationSearchResponse:
@@ -134,7 +134,7 @@ async def search_areas_only(
         page=page,
         per_page=per_page,
         type="area",
-        country_id=country_id,
+        country_iso=country_iso,
         tracking_only=tracking_only,
         search_service=search_service
     )
@@ -146,7 +146,7 @@ async def search_tracking_locations(
     page: int = Query(1, ge=1, le=1000, description="Page number"),
     per_page: int = Query(20, ge=1, le=100, description="Results per page"),
     type: Optional[Literal["destination", "area"]] = Query(None, description="Filter by location type"),
-    country_id: Optional[int] = Query(None, ge=1, description="Filter by country ID"),
+    country_iso: Optional[str] = Query(None, min_length=2, max_length=3, description="Filter by country ISO code"),
     search_service: LocationSearchService = Depends(get_location_search_service)
 ) -> LocationSearchResponse:
     """
@@ -160,7 +160,7 @@ async def search_tracking_locations(
         page=page,
         per_page=per_page,
         type=type,
-        country_id=country_id,
+        country_iso=country_iso,
         tracking_only=True,
         search_service=search_service
     )
