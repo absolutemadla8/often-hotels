@@ -465,29 +465,36 @@ class ItineraryOptimizationService:
                 return None
             
             # Check if we have solutions for all destinations
-            required_destination_ids = {dest_id for dest_id, _, _ in assignment.destinations}
-            found_destination_ids = set(hotel_solutions.keys())
-            
-            if not required_destination_ids.issubset(found_destination_ids):
-                missing = required_destination_ids - found_destination_ids
+            # Need to match destinations by both dest_id and area_id
+            required_dest_keys = {(dest_id, area_id) for dest_id, area_id, _, _ in assignment.destinations}
+            found_dest_keys = set(hotel_solutions.keys())
+
+            if not required_dest_keys.issubset(found_dest_keys):
+                missing = required_dest_keys - found_dest_keys
                 self.logger.warning(f"Missing hotel solutions for destinations: {missing}")
                 return None
-            
+
             # Convert to response format
             destination_responses = []
-            
-            for dest_id, start_date, end_date in assignment.destinations:
-                solution = hotel_solutions[dest_id]
-                
+
+            for dest_id, area_id, start_date, end_date in assignment.destinations:
                 # Find destination config for metadata
                 dest_config = next(
-                    (d for d in request.destinations if d.destination_id == dest_id), 
+                    (d for d in request.destinations if d.destination_id == dest_id and d.area_id == area_id),
                     None
                 )
-                
+
                 if not dest_config:
+                    self.logger.warning(f"No config found for dest_id={dest_id}, area_id={area_id}")
                     continue
-                
+
+                # Get solution using tuple key (dest_id, area_id)
+                solution = hotel_solutions.get((dest_id, area_id))
+
+                if not solution:
+                    self.logger.warning(f"No solution found for dest_id={dest_id}, area_id={area_id}")
+                    continue
+
                 # Convert hotel assignments
                 hotel_assignments = [
                     HotelAssignmentResponse(

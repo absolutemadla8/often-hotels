@@ -34,15 +34,15 @@ class DestinationWindow:
 @dataclass
 class ConsecutiveAssignment:
     """A complete assignment of dates to all destinations"""
-    destinations: List[Tuple[int, date, date]]  # (destination_id, start_date, end_date)
+    destinations: List[Tuple[int, Optional[int], date, date]]  # (destination_id, area_id, start_date, end_date)
     total_nights: int
     start_date: date
     end_date: date
-    
-    def get_dates_for_destination(self, destination_id: int) -> Optional[Tuple[date, date]]:
-        """Get start and end dates for a specific destination"""
-        for dest_id, start, end in self.destinations:
-            if dest_id == destination_id:
+
+    def get_dates_for_destination(self, destination_id: int, area_id: Optional[int] = None) -> Optional[Tuple[date, date]]:
+        """Get start and end dates for a specific destination and area"""
+        for dest_id, dest_area_id, start, end in self.destinations:
+            if dest_id == destination_id and (area_id is None or dest_area_id == area_id):
                 return start, end
         return None
 
@@ -182,17 +182,17 @@ class DateWindowService:
         for dest in destinations:
             dest_start = current_date
             dest_end = current_date + timedelta(days=dest.nights - 1)
-            
-            assignments.append((dest.destination_id, dest_start, dest_end))
-            
+
+            assignments.append((dest.destination_id, dest.area_id, dest_start, dest_end))
+
             # Next destination starts the day after this one ends
             current_date = dest_end + timedelta(days=1)
-        
+
         # Calculate total trip span
-        trip_start = assignments[0][1]
-        trip_end = assignments[-1][2]
+        trip_start = assignments[0][2]  # Index 2 is now start_date (after adding area_id)
+        trip_end = assignments[-1][3]   # Index 3 is now end_date
         total_nights = sum(dest.nights for dest in destinations)
-        
+
         return ConsecutiveAssignment(
             destinations=assignments,
             total_nights=total_nights,

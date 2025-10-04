@@ -594,7 +594,7 @@ class HotelPricingService:
         currency: str = "USD",
         preferred_hotels: Optional[List[int]] = None,
         hotel_change: bool = False
-    ) -> Dict[int, DestinationHotelSolution]:
+    ) -> Dict[Tuple[int, Optional[int]], DestinationHotelSolution]:
         print(f"🚨🚨🚨 OPTIMIZE_COMPLETE_ITINERARY CALLED: destinations={destinations}, currency={currency}")
         """
         Optimize hotel selections for an entire itinerary.
@@ -608,18 +608,16 @@ class HotelPricingService:
             hotel_change: Whether to allow hotel switching for optimization
             
         Returns:
-            Dict mapping destination_id -> hotel solution
+            Dict mapping (destination_id, area_id) -> hotel solution
         """
         solutions = {}
-        
-        for dest_id, start_date, end_date in assignment.destinations:
+
+        for dest_id, area_id, start_date, end_date in assignment.destinations:
             # Find destination config
-            dest_config = next((d for d in destinations if d['destination_id'] == dest_id), None)
+            dest_config = next((d for d in destinations if d['destination_id'] == dest_id and d.get('area_id') == area_id), None)
             if not dest_config:
-                self.logger.error(f"No config found for destination {dest_id}")
+                self.logger.error(f"No config found for destination {dest_id}, area {area_id}")
                 continue
-            
-            area_id = dest_config.get('area_id')
             
             # Generate list of dates for this destination
             date_assignments = []
@@ -642,15 +640,16 @@ class HotelPricingService:
             )
             
             if solution:
-                solutions[dest_id] = solution
+                # Use tuple key (dest_id, area_id) to support same destination with different areas
+                solutions[(dest_id, area_id)] = solution
             else:
-                self.logger.error(f"No hotel solution found for destination {dest_id}")
-        
+                self.logger.error(f"No hotel solution found for destination {dest_id}, area {area_id}")
+
         return solutions
     
     def calculate_total_itinerary_cost(
         self,
-        solutions: Dict[int, DestinationHotelSolution]
+        solutions: Dict[Tuple[int, Optional[int]], DestinationHotelSolution]
     ) -> Tuple[Decimal, str]:
         """
         Calculate total cost across all destination solutions.
