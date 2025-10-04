@@ -1024,17 +1024,21 @@ class HotelTrackingService:
         Tries multiple sources:
         1. extracted_hotel_class (preferred)
         2. hotel_class string parsing (e.g., "4-star hotel" -> 4)
-        3. Default to 4 for hotels that passed SerpAPI filter but have missing data
+        3. STRICT: Return None if no clear 4-5 star rating found
         
         Args:
             property_result: SerpAPI property result
             
         Returns:
-            Star rating (4 or 5) or None if unable to determine
+            Star rating (4 or 5) or None if unable to determine or not 4-5 star
         """
         # Try extracted_hotel_class first (most reliable)
         if property_result.extracted_hotel_class is not None:
-            return property_result.extracted_hotel_class
+            if property_result.extracted_hotel_class in [4, 5]:
+                return property_result.extracted_hotel_class
+            else:
+                logger.debug(f"Rejecting {property_result.name} - extracted rating {property_result.extracted_hotel_class} is not 4-5 star")
+                return None
         
         # Try to parse from hotel_class string
         if property_result.hotel_class:
@@ -1045,11 +1049,14 @@ class HotelTrackingService:
                 rating = int(match.group(1))
                 if rating in [4, 5]:  # Only accept 4-5 star
                     return rating
+                else:
+                    logger.debug(f"Rejecting {property_result.name} - parsed rating {rating} is not 4-5 star")
+                    return None
         
-        # Since the hotel passed SerpAPI's hotel_class=4,5 filter,
-        # it must be a 4 or 5 star hotel. Default to 4 as conservative estimate.
-        logger.info(f"Hotel {property_result.name} passed 4-5 star filter but has missing rating data, defaulting to 4-star")
-        return 4
+        # STRICT FILTERING: Reject hotels without clear 4-5 star rating
+        # Don't assume SerpAPI filters are working correctly
+        logger.debug(f"Rejecting {property_result.name} - no clear 4-5 star rating found (hotel_class: {property_result.hotel_class})")
+        return None
 
     async def get_tracking_summary(self) -> Dict[str, Any]:
         """
