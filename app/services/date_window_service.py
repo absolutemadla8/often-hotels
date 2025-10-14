@@ -38,6 +38,7 @@ class ConsecutiveAssignment:
     total_nights: int
     start_date: date
     end_date: date
+    label: Optional[str] = None  # Optional label for identification
 
     def get_dates_for_destination(self, destination_id: int, area_id: Optional[int] = None) -> Optional[Tuple[date, date]]:
         """Get start and end dates for a specific destination and area"""
@@ -203,43 +204,129 @@ class DateWindowService:
     def generate_monthly_slices(
         self,
         global_date_range: DateRange,
-        destinations: List[DestinationRequest]
+        destinations: List[DestinationRequest],
+        top_k: int = 3
     ) -> List[Dict[str, Any]]:
         """
-        Generate month-grouped assignments with future-only options.
-        
-        Returns list of month objects with start/mid/end options.
-        Past options are set to None.
-        
+        Generate top K cheapest trip start dates within the date range.
+
+        NEW BEHAVIOR: Instead of fixed start/mid/end of month, this evaluates
+        ALL possible trip start dates and returns assignments for the top K
+        dates that would yield cheapest hotels.
+
+        NOTE: This returns assignments ready for pricing evaluation.
+        Actual pricing happens in optimization service.
+
         Args:
             global_date_range: Overall trip date constraints
-            destinations: Ordered destinations
-            
+            destinations: Ordered destinations with nights
+            top_k: Number of best options to return (default 3)
+
         Returns:
-            List of month dictionaries with assignments grouped by month
+            List with single month group containing K assignments
         """
         from calendar import monthrange
-        
+
         total_nights = sum(dest.nights for dest in destinations)
         range_days = (global_date_range.end - global_date_range.start).days + 1
-        
+
         if total_nights > range_days:
             self.logger.warning("Trip too long for date range")
             return []
-        
+
         start_date = global_date_range.start
         end_date = global_date_range.end
-        
-        self.logger.info(f"Generating month-grouped slices from {start_date} to {end_date}")
-        
-        # Generate month-grouped options
-        month_groups = self._generate_month_grouped_options(
+
+        self.logger.info(f"Generating {top_k} cheapest trip options from {start_date} to {end_date}")
+
+        # Generate all possible trip assignments
+        all_assignments = self._generate_all_trip_assignments(
             start_date, end_date, total_nights, destinations
         )
-        
-        self.logger.info(f"Generated {len(month_groups)} month groups")
-        return month_groups
-    
+
+        if not all_assignments:
+            self.logger.warning("No valid trip assignments found in date range")
+            return []
+
+        # Return ALL assignments for evaluation
+        # The optimization service will evaluate costs and select top K
+        month_name = f"{start_date.strftime('%B %Y')}"
+
+        # Store all assignments in the month group
+        # We'll use custom keys to store all of them
+        month_group = {
+            "month": month_name,
+            "all_assignments": all_assignments  # Store all for evaluation
+        }
+
+        self.logger.info(f"Generated {len(all_assignments)} trip options for cost evaluation")
+        return [month_group]
+
+    def _generate_all_trip_assignments(
+        self,
+        start_date: date,
+        end_date: date,
+        total_nights: int,
+        destinations: List[DestinationRequest],
+        max_samples: int = 20
+    ) -> List[ConsecutiveAssignment]:
+        """
+        Generate sampled trip assignments within date range for performance.
+
+        OPTIMIZATION: Instead of generating ALL possible dates, we sample strategically:
+        - If range <= max_samples: Generate all dates
+        - If range > max_samples: Sample evenly distributed dates
+
+        Args:
+            start_date: Earliest possible trip start
+            end_date: Latest possible trip end
+            total_nights: Total nights across all destinations
+            destinations: Ordered list of destinations with nights
+            max_samples: Maximum number of dates to sample (default 20)
+
+        Returns:
+            List of ConsecutiveAssignment objects, sampled strategically
+        """
+        assignments = []
+
+        # Calculate latest valid start date
+        latest_start = end_date - timedelta(days=total_nights)
+
+        if latest_start < start_date:
+            self.logger.warning(f"Date range too small for {total_nights} night trip")
+            return []
+
+        total_possible = (latest_start - start_date).days + 1
+
+        if total_possible <= max_samples:
+            # Generate all dates if range is small
+            self.logger.info(f"Small range: generating all {total_possible} possible start dates")
+            current_start = start_date
+            while current_start <= latest_start:
+                assignment = self._build_consecutive_assignment(destinations, current_start)
+                if assignment and assignment.end_date <= end_date:
+                    days_from_start = (current_start - start_date).days
+                    assignment.label = f"option_{days_from_start + 1}"
+                    assignments.append(assignment)
+                current_start += timedelta(days=1)
+        else:
+            # Sample evenly distributed dates for large ranges
+            self.logger.info(f"Large range ({total_possible} dates): sampling {max_samples} evenly distributed dates")
+            step = total_possible / max_samples
+
+            for i in range(max_samples):
+                days_offset = int(i * step)
+                current_start = start_date + timedelta(days=days_offset)
+
+                if current_start <= latest_start:
+                    assignment = self._build_consecutive_assignment(destinations, current_start)
+                    if assignment and assignment.end_date <= end_date:
+                        assignment.label = f"sampled_option_{i + 1}"
+                        assignments.append(assignment)
+
+        self.logger.info(f"Generated {len(assignments)} trip assignments for evaluation")
+        return assignments
+
     def _generate_month_grouped_options(
         self,
         start_date: date,

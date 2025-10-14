@@ -783,6 +783,7 @@ class UniversalPriceHistory(Model):
     is_price_drop = fields.BooleanField(null=True)
     is_price_increase = fields.BooleanField(null=True)
     data_source = fields.CharField(max_length=100)
+    booking_source = fields.CharField(max_length=100, null=True)  # Booking.com, Hotels.com, Expedia, etc.
     external_rate_id = fields.CharField(max_length=255, null=True)
     api_response_time_ms = fields.IntField(null=True)
     trace_id = fields.CharField(max_length=255, null=True)

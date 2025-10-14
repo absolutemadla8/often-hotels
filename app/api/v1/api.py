@@ -1,6 +1,9 @@
 from fastapi import APIRouter
 
-from app.api.v1.endpoints import auth, users, locations, tracking, recommendations, tasks, itineraries, hotels, user_access
+from app.api.v1.endpoints import (
+    auth, users, locations, tracking, recommendations, tasks,
+    itineraries, hotels, user_access, jobs, monitoring
+)
 from app.api.v1.endpoints.admin import hotel_tracking
 
 api_router = APIRouter()
@@ -14,6 +17,10 @@ api_router.include_router(user_access.router, prefix="/access", tags=["user-acce
 api_router.include_router(tracking.router, tags=["tracking"])
 api_router.include_router(recommendations.router, tags=["recommendations"])
 api_router.include_router(tasks.router, prefix="/tasks", tags=["tasks"])
+
+# Job management and monitoring (NEW)
+api_router.include_router(jobs.router, tags=["jobs"])
+api_router.include_router(monitoring.router, tags=["monitoring"])
 
 # Admin endpoints
 api_router.include_router(

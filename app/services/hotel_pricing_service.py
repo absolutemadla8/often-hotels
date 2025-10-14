@@ -8,7 +8,7 @@ for single hotels covering entire stays.
 
 import logging
 from datetime import date, timedelta
-from typing import List, Dict, Tuple, Optional, Set
+from typing import List, Dict, Tuple, Optional, Set, Any
 from decimal import Decimal
 from dataclasses import dataclass
 from collections import defaultdict
@@ -30,6 +30,7 @@ class HotelAssignment:
     currency: str
     room_type: Optional[str] = None
     selection_reason: str = "cheapest_day"
+    meta_prices: Optional[List[Dict[str, Any]]] = None  # [{source, price}]
 
 
 @dataclass
@@ -128,22 +129,29 @@ class HotelPricingService:
         hotel_price_objects = []
         hotels_with_prices = 0
         hotels_without_prices = 0
-        
+
         for hotel in hotels:
-            hotel_prices = price_data.get(hotel.id, {})
-            if hotel_prices:  # Only include hotels with price data
+            hotel_price_info = price_data.get(hotel.id, {})
+            if hotel_price_info:  # Only include hotels with price data
                 hotels_with_prices += 1
                 available_dates = [
-                    date.fromisoformat(date_str) 
-                    for date_str in hotel_prices.keys()
+                    date.fromisoformat(date_str)
+                    for date_str in hotel_price_info.keys()
                 ]
-                
+
+                # Extract min_price for each date and keep sources separately
+                hotel_prices = {
+                    date_str: info["min_price"]
+                    for date_str, info in hotel_price_info.items()
+                }
+
                 hotel_price_obj = HotelPriceData(
                     hotel_id=hotel.id,
                     hotel_name=hotel.name,
-                    prices={date_str: price for date_str, price in hotel_prices.items()},
+                    prices=hotel_prices,
                     currency=currency,
-                    availability_dates=sorted(available_dates)
+                    availability_dates=sorted(available_dates),
+                    meta_prices=hotel_price_info  # Include full data with sources
                 )
                 hotel_price_objects.append(hotel_price_obj)
                 self.logger.info(f"🔍 HOTEL PRICING: ✅ Hotel {hotel.id} ({hotel.name}) has {len(hotel_prices)} price entries")
@@ -161,12 +169,12 @@ class HotelPricingService:
         start_date: date,
         end_date: date,
         currency: str
-    ) -> Dict[int, Dict[str, Decimal]]:
+    ) -> Dict[int, Dict[str, Dict[str, Any]]]:
         """
         Fetch price data from database for hotels and date range.
-        
+
         Returns:
-            Dict mapping hotel_id -> {date_string -> price}
+            Dict mapping hotel_id -> {date_string -> {price, sources: [{source, price}]}}
         """
         self.logger.info(f"🔍 PRICE FETCH: Starting price data fetch for {len(hotel_ids)} hotels")
         self.logger.info(f"🔍 PRICE FETCH: Date range: {start_date} to {end_date}")
@@ -190,10 +198,12 @@ class HotelPricingService:
             currency=currency,
             is_available=True
         ).order_by('trackable_id', 'price_date', '-recorded_at')
-        
+
         print(f"🚨🚨🚨 PRICE QUERY: About to execute price query...")
+        print(f"🚨🚨🚨 PRICE QUERY DEBUG: trackable_type={TrackableType.HOTEL_ROOM.value}, hotel_ids_count={len(hotel_ids)}, hotel_ids_sample={hotel_ids[:5]}, start_date={start_date}, end_date={end_date}, currency={currency}")
         self.logger.info(f"🔍 PRICE FETCH: Executing price query...")
         price_records = await price_query.all()
+        print(f"🚨🚨🚨 PRICE QUERY DEBUG: Raw query executed, got {len(price_records)} records")
         print(f"🚨🚨🚨 PRICE QUERY: Found {len(price_records)} price records")
         self.logger.info(f"🔍 PRICE FETCH: Found {len(price_records)} price records")
         
@@ -202,29 +212,36 @@ class HotelPricingService:
             for i, record in enumerate(price_records[:3]):
                 self.logger.info(f"🔍 PRICE FETCH: Record {i+1}: hotel_id={record.trackable_id}, date={record.price_date}, price={record.price}, currency={record.currency}")
         
-        # Group by hotel_id and date, using most recent record for each date
-        hotel_prices = defaultdict(dict)
-        recorded_times = defaultdict(dict)  # Track when each price was recorded
-        
+        # Group by hotel_id, date, and booking_source
+        hotel_prices = defaultdict(lambda: defaultdict(lambda: {"sources": [], "min_price": None}))
+
         processed_records = 0
         for record in price_records:
             hotel_id = record.trackable_id
             date_str = record.price_date.isoformat()
-            
-            # Use the most recent (latest recorded_at) price if multiple records exist for same date
-            if (date_str not in hotel_prices[hotel_id] or 
-                record.recorded_at > recorded_times[hotel_id][date_str]):
-                hotel_prices[hotel_id][date_str] = record.price
-                recorded_times[hotel_id][date_str] = record.recorded_at
-                processed_records += 1
-        
+            booking_source = record.booking_source or "Direct"
+            price = float(record.price)
+
+            # Add this booking source to the list
+            hotel_prices[hotel_id][date_str]["sources"].append({
+                "source": booking_source,
+                "price": price
+            })
+
+            # Track the minimum price
+            if hotel_prices[hotel_id][date_str]["min_price"] is None or price < hotel_prices[hotel_id][date_str]["min_price"]:
+                hotel_prices[hotel_id][date_str]["min_price"] = price
+
+            processed_records += 1
+
         self.logger.info(f"🔍 PRICE FETCH: Processed {processed_records} records into {len(hotel_prices)} hotels")
-        
+
         # Log summary of hotels with price data
         for hotel_id, dates in list(hotel_prices.items())[:3]:
             self.logger.info(f"🔍 PRICE FETCH: Hotel {hotel_id} has prices for {len(dates)} dates: {list(dates.keys())[:5]}{'...' if len(dates) > 5 else ''}")
-        
-        return dict(hotel_prices)
+
+        # Convert to regular dict
+        return {hotel_id: dict(dates) for hotel_id, dates in hotel_prices.items()}
     
     def optimize_destination_hotels(
         self,
@@ -314,19 +331,25 @@ class HotelPricingService:
             # Calculate total cost for this hotel
             total_cost = Decimal('0')
             assignments = []
-            
+
             for assignment_date in sorted(date_assignments):
                 date_str = assignment_date.isoformat()
                 price = hotel_data.prices[date_str]
                 total_cost += price
-                
+
+                # Extract meta_prices for this date
+                meta_prices_data = None
+                if hotel_data.meta_prices and date_str in hotel_data.meta_prices:
+                    meta_prices_data = hotel_data.meta_prices[date_str].get("sources", [])
+
                 assignment = HotelAssignment(
                     hotel_id=hotel_data.hotel_id,
                     hotel_name=hotel_data.hotel_name,
                     assignment_date=assignment_date,
                     price=price,
                     currency=hotel_data.currency,
-                    selection_reason="single_hotel"
+                    selection_reason="single_hotel",
+                    meta_prices=meta_prices_data
                 )
                 assignments.append(assignment)
             
@@ -355,30 +378,35 @@ class HotelPricingService:
         hotel_price_data: List[HotelPriceData]
     ) -> Optional[DestinationHotelSolution]:
         """Find cheapest hotel for each day independently"""
-        
+
         assignments = []
         total_cost = Decimal('0')
         hotels_used = set()
         currency = None
-        
+
         for assignment_date in sorted(date_assignments):
             date_str = assignment_date.isoformat()
-            
+
             # Find cheapest hotel for this specific date
             cheapest_price = None
             cheapest_hotel = None
-            
+
             for hotel_data in hotel_price_data:
                 if date_str in hotel_data.prices:
                     price = hotel_data.prices[date_str]
                     if cheapest_price is None or price < cheapest_price:
                         cheapest_price = price
                         cheapest_hotel = hotel_data
-            
+
             if not cheapest_hotel:
                 self.logger.warning(f"No hotel available for date {assignment_date}")
                 return None
-            
+
+            # Extract meta_prices (sources) for this date
+            meta_prices_data = None
+            if cheapest_hotel.meta_prices and date_str in cheapest_hotel.meta_prices:
+                meta_prices_data = cheapest_hotel.meta_prices[date_str].get("sources", [])
+
             # Create assignment for this date
             assignment = HotelAssignment(
                 hotel_id=cheapest_hotel.hotel_id,
@@ -386,17 +414,18 @@ class HotelPricingService:
                 assignment_date=assignment_date,
                 price=cheapest_price,
                 currency=cheapest_hotel.currency,
-                selection_reason="cheapest_day"
+                selection_reason="cheapest_day",
+                meta_prices=meta_prices_data
             )
-            
+
             assignments.append(assignment)
             total_cost += cheapest_price
             hotels_used.add(cheapest_hotel.hotel_id)
             currency = cheapest_hotel.currency  # Assume all same currency
-        
+
         if not assignments:
             return None
-        
+
         return DestinationHotelSolution(
             destination_id=destination_id,
             area_id=area_id,
@@ -551,23 +580,35 @@ class HotelPricingService:
                     # Build assignments
                     assignments = []
                     for assignment_date in first_half:
+                        date_str = assignment_date.isoformat()
+                        meta_prices_data = None
+                        if first_hotel_data.meta_prices and date_str in first_hotel_data.meta_prices:
+                            meta_prices_data = first_hotel_data.meta_prices[date_str].get("sources", [])
+
                         assignments.append(HotelAssignment(
                             hotel_id=first_hotel_data.hotel_id,
                             hotel_name=first_hotel_data.hotel_name,
                             assignment_date=assignment_date,
-                            price=first_hotel_data.prices[assignment_date.isoformat()],
+                            price=first_hotel_data.prices[date_str],
                             currency=first_hotel_data.currency,
-                            selection_reason="preferred_block" if first_hotel_data.hotel_id in [h.hotel_id for h in preferred_hotel_data] else "cost_block"
+                            selection_reason="preferred_block" if first_hotel_data.hotel_id in [h.hotel_id for h in preferred_hotel_data] else "cost_block",
+                            meta_prices=meta_prices_data
                         ))
-                    
+
                     for assignment_date in second_half:
+                        date_str = assignment_date.isoformat()
+                        meta_prices_data = None
+                        if second_hotel_data.meta_prices and date_str in second_hotel_data.meta_prices:
+                            meta_prices_data = second_hotel_data.meta_prices[date_str].get("sources", [])
+
                         assignments.append(HotelAssignment(
                             hotel_id=second_hotel_data.hotel_id,
                             hotel_name=second_hotel_data.hotel_name,
                             assignment_date=assignment_date,
-                            price=second_hotel_data.prices[assignment_date.isoformat()],
+                            price=second_hotel_data.prices[date_str],
                             currency=second_hotel_data.currency,
-                            selection_reason="preferred_block" if second_hotel_data.hotel_id in [h.hotel_id for h in preferred_hotel_data] else "cost_block"
+                            selection_reason="preferred_block" if second_hotel_data.hotel_id in [h.hotel_id for h in preferred_hotel_data] else "cost_block",
+                            meta_prices=meta_prices_data
                         ))
                     
                     hotels_used = {first_hotel_data.hotel_id, second_hotel_data.hotel_id}

@@ -25,31 +25,40 @@ class RecommendationRequest(BaseModel):
     currency: str = Field("USD", description="Currency code")
 
 
+class MetaPrice(BaseModel):
+    source: str = Field(..., description="Booking website name (e.g., 'Booking.com')")
+    price: float = Field(..., description="Price on this website")
+
+
 class Hotel(BaseModel):
     name: str
+    hotelId: Optional[int] = None
     image: str
-    price: str
+    price: float
+    currency: str
     status: str
-    statusColor: str
-    isBlurred: bool
-    blurMessage: Optional[str] = None
+    nights: int
+    checkIn: str
+    checkOut: str
+    meta_prices: List[MetaPrice] = Field(default_factory=list, description="Prices across different booking websites")
 
 
 class Destination(BaseModel):
     name: str
-    hotels: List[Hotel]
+    destinationId: str
+    areaId: Optional[int] = None
+    hotels: List[Hotel] = Field(..., description="One entry per time segment, same hotel repeated with different dates/prices")
 
 
-class TimeSegment(BaseModel):
-    name: str
+class Tier(BaseModel):
+    id: str
+    title: str
+    timeSegments: List[str] = Field(..., description="Array of time segment labels (e.g., '2024-12-01 to 2024-12-10')")
     destinations: List[Destination]
 
 
 class RecommendationResponse(BaseModel):
-    id: str
-    title: str
-    headerColor: str
-    timeSegments: List[TimeSegment]
+    tiers: List[Tier]
 
 
 def calculate_date_ranges(destinations: List[DestinationStay], start_date: date) -> List[tuple[str, date, date]]:
@@ -96,6 +105,21 @@ def get_status_for_price(price: float, variation_index: int) -> tuple[str, str, 
         return "Peak Season", "text-red-600", True, "Subscribe to unlock holiday pricing"
 
 
+def get_status_for_price_simple(price: float, segment_index: int) -> str:
+    """Generate simple status based on price and segment index"""
+    if segment_index == 0:
+        if price < 200:
+            return "Available"
+        elif price < 400:
+            return "Limited"
+        else:
+            return "Premium"
+    elif segment_index == 1:
+        return "Limited"
+    else:
+        return "Peak Season"
+
+
 async def get_hotels_from_database(
     destination_id: str,
     check_in: date,
@@ -105,29 +129,41 @@ async def get_hotels_from_database(
     currency: str,
     country_code: str
 ) -> List[Dict[str, Any]]:
-    """Get hotels from internal price history database"""
-
-    # Map destination IDs to query patterns
-    destination_patterns = {
-        "ubud": "ubud",
-        "canggu": "canggu",
-        "seminyak": "seminyak",
-        "kuta": "kuta",
-        "sanur": "sanur",
-        "goa": "goa",
-        "mumbai": "mumbai",
-        "delhi": "delhi"
-    }
-
-    location_pattern = destination_patterns.get(destination_id.lower(), destination_id.lower())
+    """Get hotels from internal price history database using structured queries"""
+    from app.models.models import Area, Destination
 
     try:
-        # Query our price history database
-        price_records = await UniversalPriceHistory.filter(
-            trackable_type="hotel_room",
-            price_date=check_in,
-            search_criteria__icontains=location_pattern
-        ).order_by("price").limit(8)
+        # Try to parse destination_id as integer (proper ID)
+        try:
+            dest_id_int = int(destination_id)
+            # Query using trackable_id (hotel_id) and search_criteria destination_id
+            price_records = await UniversalPriceHistory.filter(
+                trackable_type="hotel_room",
+                price_date=check_in,
+                search_criteria__destination_id=dest_id_int
+            ).order_by("price").limit(8)
+        except ValueError:
+            # If not an integer, try text matching (fallback for legacy data)
+            # Map destination IDs to query patterns
+            destination_patterns = {
+                "ubud": "ubud",
+                "canggu": "canggu",
+                "seminyak": "seminyak",
+                "kuta": "kuta",
+                "sanur": "sanur",
+                "goa": "goa",
+                "mumbai": "mumbai",
+                "delhi": "delhi"
+            }
+
+            location_pattern = destination_patterns.get(destination_id.lower(), destination_id.lower())
+
+            # Fallback to text search for backward compatibility
+            price_records = await UniversalPriceHistory.filter(
+                trackable_type="hotel_room",
+                price_date=check_in,
+                search_criteria__icontains=location_pattern
+            ).order_by("price").limit(8)
 
         hotels = []
         seen_hotels = set()  # Track unique hotels by name
@@ -147,7 +183,8 @@ async def get_hotels_from_database(
                 "price": float(record.price),
                 "rating": search_criteria.get("overall_rating", 4.5),
                 "reviews": search_criteria.get("reviews", 1234),
-                "currency": record.currency
+                "currency": record.currency,
+                "prices": search_criteria.get("prices", [])  # Include prices array from SERP
             })
 
         # If we don't have enough data, fill with mock data
@@ -158,7 +195,8 @@ async def get_hotels_from_database(
                 "price": random.randint(150, 500),
                 "rating": 4.5,
                 "reviews": 1234,
-                "currency": currency
+                "currency": currency,
+                "prices": []  # No meta prices for mock data
             })
 
         return hotels[:6]  # Return top 6
@@ -172,7 +210,8 @@ async def get_hotels_from_database(
                 "price": random.randint(150, 500),
                 "rating": 4.5,
                 "reviews": 1234,
-                "currency": currency
+                "currency": currency,
+                "prices": []
             }
         ]
 
@@ -181,69 +220,118 @@ async def get_hotels_from_database(
 async def get_multi_destination_recommendations(
     request: RecommendationRequest
 ):
-    """Get hotel recommendations for multi-destination trip with price variations"""
+    """Get hotel recommendations for multi-destination trip with price variations
+
+    New Structure:
+    - Returns tiers (e.g., December 2024 tier)
+    - Each tier has timeSegments labels array
+    - Each destination has hotels array with one entry per time segment
+    - Same hotel repeated across time segments with different prices/dates
+    """
 
     try:
-        # Generate time segment labels for variations
-        time_segment_labels = generate_time_segments(request.start_date, request.variations)
-
         # Calculate total trip duration
         total_nights = sum(dest.nights for dest in request.destinations)
-        trip_month = request.start_date.strftime("%B")
+        trip_month = request.start_date.strftime("%B %Y")
 
-        time_segments = []
-
-        # Process each variation (different start dates)
+        # Generate time segments (date ranges for each variation)
+        time_segment_data = []
         for variation_idx in range(request.variations):
             variation_start_date = request.start_date + timedelta(days=variation_idx * 7)
             date_ranges = calculate_date_ranges(request.destinations, variation_start_date)
 
-            # Create destinations for this time segment
-            segment_destinations = []
+            # Create label for this time segment
+            first_check_in = date_ranges[0][1]
+            last_check_out = date_ranges[-1][2]
+            label = f"{first_check_in.strftime('%Y-%m-%d')} to {last_check_out.strftime('%Y-%m-%d')}"
 
-            # For each destination in this variation
-            for dest_id, check_in, check_out in date_ranges:
-                # Get hotels from internal database
+            time_segment_data.append({
+                "label": label,
+                "date_ranges": date_ranges,
+                "start_date": first_check_in
+            })
+
+        # Build destinations structure
+        # Key: destination_id, Value: list of hotels (one per time segment)
+        destinations_map: Dict[str, Dict[str, Any]] = {}
+
+        # For each destination in the request
+        for dest_config in request.destinations:
+            dest_id = dest_config.destination_id
+
+            if dest_id not in destinations_map:
+                destinations_map[dest_id] = {
+                    "name": dest_id.title(),
+                    "destinationId": dest_id,
+                    "areaId": None,
+                    "hotels_by_time_segment": []  # Will have entries for each time segment
+                }
+
+        # Process each time segment
+        for segment_idx, segment_info in enumerate(time_segment_data):
+            date_ranges = segment_info["date_ranges"]
+
+            # For each destination's date range in this time segment
+            for dest_config, (dest_id, check_in, check_out) in zip(request.destinations, date_ranges):
+                # Get best hotel for this destination in this time segment
                 hotels_data = await get_hotels_from_database(
                     dest_id, check_in, check_out,
                     request.adults, request.children,
                     request.currency, request.country_code
                 )
 
-                # Create hotels for this destination in this time segment
-                hotels = []
-                for hotel_data in hotels_data[:2]:  # Top 2 hotels per destination per variation
+                if hotels_data:
+                    # Take the best hotel (lowest price)
+                    hotel_data = hotels_data[0]
                     price = hotel_data["price"]
-                    status, status_color, is_blurred, blur_msg = get_status_for_price(price, variation_idx)
+                    nights = (check_out - check_in).days
+
+                    # Get status for this price
+                    status = get_status_for_price_simple(price, segment_idx)
+
+                    # Extract meta_prices from the hotel data
+                    meta_prices = []
+                    if "prices" in hotel_data and hotel_data["prices"]:
+                        for price_source in hotel_data["prices"]:
+                            meta_prices.append(MetaPrice(
+                                source=price_source.get("source", "Unknown"),
+                                price=price_source.get("rate_per_night", {}).get("extracted_lowest", price)
+                            ))
 
                     hotel = Hotel(
                         name=hotel_data["name"],
+                        hotelId=hotel_data.get("hotel_id"),
                         image=hotel_data["image"],
-                        price=f"${price}/night" if request.currency == "USD" else f"{price} {request.currency}/night",
+                        price=price,
+                        currency=request.currency,
                         status=status,
-                        statusColor=status_color,
-                        isBlurred=is_blurred,
-                        blurMessage=blur_msg
+                        nights=nights,
+                        checkIn=check_in.isoformat(),
+                        checkOut=check_out.isoformat(),
+                        meta_prices=meta_prices
                     )
-                    hotels.append(hotel)
 
-                # Create destination with its hotels
-                destination = Destination(name=dest_id.title(), hotels=hotels)
-                segment_destinations.append(destination)
+                    destinations_map[dest_id]["hotels_by_time_segment"].append(hotel)
 
-            # Create time segment with its destinations
-            time_segment = TimeSegment(
-                name=time_segment_labels[variation_idx],
-                destinations=segment_destinations
-            )
-            time_segments.append(time_segment)
+        # Build final destinations list
+        destinations = []
+        for dest_id, dest_data in destinations_map.items():
+            destinations.append(Destination(
+                name=dest_data["name"],
+                destinationId=dest_data["destinationId"],
+                areaId=dest_data["areaId"],
+                hotels=dest_data["hotels_by_time_segment"]
+            ))
 
-        response_data = RecommendationResponse(
-            id="5-star-hotels",
-            title=f"5 Star Hotels - {trip_month} ({total_nights} nights)",
-            headerColor="bg-gradient-to-r from-blue-100 to-indigo-100",
-            timeSegments=time_segments
+        # Create tier
+        tier = Tier(
+            id=f"{trip_month.lower().replace(' ', '-')}",
+            title=f"{trip_month} ({total_nights} nights)",
+            timeSegments=[seg["label"] for seg in time_segment_data],
+            destinations=destinations
         )
+
+        response_data = RecommendationResponse(tiers=[tier])
 
         return ResponseBase(
             success=True,

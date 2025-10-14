@@ -1,13 +1,14 @@
 from typing import Any, List, Optional
-from datetime import date
+from datetime import date, datetime, timedelta
 from decimal import Decimal
 from collections import defaultdict
 
 from fastapi import APIRouter, Depends, HTTPException, status, Query
 from fastapi.responses import JSONResponse
+from pydantic import BaseModel, Field
 
 from app import models, schemas
-from app.models.models import User, Hotel, UniversalPriceHistory, Destination, Area
+from app.models.models import User, Hotel, UniversalPriceHistory, Destination, Area, TrackableType
 from app.api.tortoise_deps import get_optional_current_user, get_current_verified_user, get_current_superuser
 from app.schemas.itinerary import (
     HotelSearchRequest, HotelSearchResponse, HotelAvailabilityInfo, DateRange,
@@ -15,8 +16,12 @@ from app.schemas.itinerary import (
     SearchMetadata, SortingInfo, HotelSearchSummary
 )
 from app.core.data_filter import filter_by_user_access, create_filtered_response
+from app.services.serp_service import SerpApiService, SearchCriteria
+from app.core.config import settings
+from app.core.logging import get_logger
 
 router = APIRouter()
+logger = get_logger(__name__)
 
 
 @router.get("/search")
@@ -526,16 +531,16 @@ async def list_hotels(
     List hotels with optional filtering by destination/area.
     """
     query = Hotel.filter(is_active=True)
-    
+
     if destination_id:
         query = query.filter(destination_id=destination_id)
-    
+
     if area_id:
         query = query.filter(area_id=area_id)
-    
+
     total = await query.count()
     hotels = await query.offset(skip).limit(limit).all()
-    
+
     return {
         "hotels": [
             {
@@ -553,3 +558,229 @@ async def list_hotels(
         "skip": skip,
         "limit": limit
     }
+
+
+class MetaPricesRequest(BaseModel):
+    hotel_name: str = Field(..., description="Hotel name to search for")
+    check_in: date = Field(..., description="Check-in date")
+    check_out: date = Field(..., description="Check-out date")
+    adults: int = Field(2, description="Number of adults")
+    children: int = Field(0, description="Number of children")
+    currency: str = Field("INR", description="Currency code")
+    gl: str = Field("in", description="Country code")
+    hl: str = Field("en", description="Language code")
+
+
+class PriceSourceInfo(BaseModel):
+    source: str
+    logo: Optional[str] = None
+    lowest_price: Optional[float] = None
+
+
+class MetaPricesResponse(BaseModel):
+    hotel_name: str
+    hotel_type: Optional[str] = None
+    description: Optional[str] = None
+    star_rating: Optional[int] = None
+    guest_rating: Optional[float] = None
+    reviews: Optional[int] = None
+    check_in_date: str
+    check_out_date: str
+    currency: str
+    prices: List[PriceSourceInfo]
+    cached: bool
+    last_fetched: datetime
+
+
+@router.post("/meta-prices")
+async def get_meta_prices(
+    request: MetaPricesRequest,
+    current_user: Optional[User] = Depends(get_optional_current_user),
+) -> Any:
+    """
+    Get hotel meta-prices from multiple booking sources.
+
+    Returns cached prices if they exist and were discovered within the last 5 days.
+    Otherwise, fetches fresh prices from SerpAPI and saves them.
+
+    Response includes hotel details and array of {source, logo, lowest_price}.
+    """
+    try:
+        logger.info(f"Meta-prices request for hotel: {request.hotel_name}",
+                    check_in=request.check_in.isoformat(),
+                    check_out=request.check_out.isoformat(),
+                    currency=request.currency)
+
+        # Calculate date range for the stay
+        nights = (request.check_out - request.check_in).days
+        if nights <= 0:
+            logger.error("Invalid date range", check_in=request.check_in, check_out=request.check_out)
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Check-out date must be after check-in date"
+            )
+
+        # Look for hotel in database by name (case-insensitive)
+        logger.info(f"Searching for hotel in database: {request.hotel_name}")
+        hotel = await Hotel.filter(name__iexact=request.hotel_name).first()
+
+        if hotel:
+            logger.info(f"✓ Found hotel in database", hotel_id=hotel.id, hotel_name=hotel.name)
+        else:
+            logger.warning(f"✗ Hotel not found in database: {request.hotel_name}")
+
+        # Temporarily disabled 5-day cache - always fetch fresh data for testing
+
+        # Fetch fresh data from SerpAPI
+        logger.info("Fetching fresh prices from SerpAPI", query=request.hotel_name)
+        serp_service = SerpApiService(api_key=settings.SERP_API_KEY)
+
+        try:
+            criteria = SearchCriteria(
+                query=request.hotel_name,
+                check_in_date=request.check_in,
+                check_out_date=request.check_out,
+                adults=request.adults,
+                children=request.children,
+                currency=request.currency,
+                gl=request.gl,
+                hl=request.hl
+            )
+
+            logger.info("Calling SerpAPI search_hotels", criteria=criteria.query)
+            response = await serp_service.search_hotels(criteria)
+            logger.info("✓ Received SerpAPI response",
+                       response_type=response.type if hasattr(response, 'type') else 'unknown',
+                       has_properties=len(response.properties) if response.properties else 0,
+                       has_featured_prices=len(response.featured_prices) if hasattr(response, 'featured_prices') and response.featured_prices else 0)
+
+            # Extract hotel details and featured prices
+            hotel_details = None
+            featured_prices = []
+
+            # Check if response is for a single property (when query is hotel name)
+            if hasattr(response, 'type') and response.type == "hotel":
+                logger.info(f"✓ Single hotel response detected: {response.name}")
+                # Single property response
+                hotel_details = {
+                    "name": response.name,
+                    "type": response.type,
+                    "description": response.description,
+                    "star_rating": response.extracted_hotel_class,
+                    "guest_rating": response.overall_rating,
+                    "reviews": response.reviews
+                }
+
+                # Only use featured_prices (not the regular prices array)
+                featured_prices = response.featured_prices if response.featured_prices else []
+                logger.info(f"Using {len(featured_prices)} featured price sources")
+
+            elif response.properties:
+                # Multiple properties returned, find the best match
+                logger.info(f"Multiple properties response, using first property")
+                property_result = response.properties[0]  # Take first result
+                hotel_details = {
+                    "name": property_result.name,
+                    "type": property_result.type,
+                    "description": property_result.description,
+                    "star_rating": property_result.extracted_hotel_class,
+                    "guest_rating": property_result.overall_rating,
+                    "reviews": property_result.reviews
+                }
+
+                # Extract prices from the property
+                featured_prices = property_result.prices
+                logger.info(f"Found {len(featured_prices)} price sources from property.prices")
+            else:
+                raise HTTPException(
+                    status_code=status.HTTP_404_NOT_FOUND,
+                    detail=f"Hotel '{request.hotel_name}' not found in search results"
+                )
+
+            # Create or update hotel in database if it doesn't exist
+            if not hotel and hotel_details:
+                # We'd need destination_id to create a hotel, skip creation for now
+                pass
+
+            # Save prices to database
+            if hotel and featured_prices:
+                logger.info(f"Saving {len(featured_prices)} price sources to database for hotel_id={hotel.id}")
+                recorded_at = datetime.utcnow()
+                saved_count = 0
+
+                for price_source in featured_prices:
+                    # Prioritize rate_per_night, fall back to total_rate
+                    price_value = None
+                    if price_source.rate_per_night and price_source.rate_per_night.extracted_lowest:
+                        price_value = price_source.rate_per_night.extracted_lowest
+                    elif price_source.total_rate and price_source.total_rate.extracted_lowest:
+                        price_value = price_source.total_rate.extracted_lowest
+
+                    if price_value:
+                        logger.info(f"Saving price from {price_source.source}: {price_value} {request.currency}")
+                        await UniversalPriceHistory.create(
+                            trackable_type=TrackableType.HOTEL_ROOM,
+                            trackable_id=hotel.id,
+                            price_date=request.check_in,
+                            search_date=request.check_in,
+                            search_end_date=request.check_out,
+                            price=Decimal(str(price_value)),
+                            currency=request.currency,
+                            is_available=True,
+                            search_criteria={
+                                "query": request.hotel_name,
+                                "check_in": request.check_in.isoformat(),
+                                "check_out": request.check_out.isoformat(),
+                                "adults": request.adults,
+                                "children": request.children,
+                                "source_logo": price_source.logo
+                            },
+                            data_source="serpapi",
+                            booking_source=price_source.source,
+                            recorded_at=recorded_at
+                        )
+                        saved_count += 1
+
+                logger.info(f"✓ Successfully saved {saved_count} price records to database")
+
+            # Build response with fresh prices
+            # Prioritize rate_per_night, fall back to total_rate
+            price_sources = []
+            for ps in featured_prices:
+                lowest_price = None
+                if ps.rate_per_night and ps.rate_per_night.extracted_lowest:
+                    lowest_price = ps.rate_per_night.extracted_lowest
+                elif ps.total_rate and ps.total_rate.extracted_lowest:
+                    lowest_price = ps.total_rate.extracted_lowest
+
+                price_sources.append(PriceSourceInfo(
+                    source=ps.source,
+                    logo=ps.logo,
+                    lowest_price=lowest_price
+                ))
+
+            return MetaPricesResponse(
+                hotel_name=hotel_details["name"],
+                hotel_type=hotel_details.get("type"),
+                description=hotel_details.get("description"),
+                star_rating=hotel_details.get("star_rating"),
+                guest_rating=hotel_details.get("guest_rating"),
+                reviews=hotel_details.get("reviews"),
+                check_in_date=request.check_in.isoformat(),
+                check_out_date=request.check_out.isoformat(),
+                currency=request.currency,
+                prices=price_sources,
+                cached=False,
+                last_fetched=datetime.utcnow()
+            )
+
+        finally:
+            await serp_service.client.aclose()
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to fetch meta-prices: {str(e)}"
+        )

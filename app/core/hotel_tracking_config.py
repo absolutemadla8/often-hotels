@@ -41,7 +41,7 @@ class HotelTrackingConfig:
     DEFAULT_CURRENCY: str = "INR"
     """Default currency for price tracking (Indian Rupees)"""
     
-    DEFAULT_COUNTRY: str = "us"
+    DEFAULT_COUNTRY: str = "in"
     """Default country code for search localization"""
     
     DEFAULT_LANGUAGE: str = "en"

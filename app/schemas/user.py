@@ -45,12 +45,12 @@ class UserUpdatePassword(BaseModel):
 # Properties to return via API
 class UserResponse(UserBase):
     id: int
-    is_verified: bool
+    is_verified: bool = False
     is_superuser: bool
     created_at: datetime
     updated_at: datetime
-    last_login: Optional[datetime]
-    profile_picture_url: Optional[str]
+    last_login: Optional[datetime] = None
+    profile_picture_url: Optional[str] = None
 
     class Config:
         from_attributes = True

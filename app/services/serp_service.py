@@ -56,6 +56,7 @@ class SearchCriteria:
     hotel_class: Optional[List[HotelClass]] = None
     free_cancellation: Optional[bool] = None
     vacation_rentals: bool = False
+    is_tracker_search: bool = False  # Add property_types filter for tracker searches
 
 
 class GPSCoordinates(BaseModel):
@@ -73,7 +74,11 @@ class RateInfo(BaseModel):
 class PriceSource(BaseModel):
     source: str
     logo: Optional[str] = None
-    rate_per_night: RateInfo
+    rate_per_night: Optional[RateInfo] = None
+    total_rate: Optional[RateInfo] = None
+    free_cancellation: Optional[bool] = None
+    free_cancellation_until_date: Optional[str] = None
+    free_cancellation_until_time: Optional[str] = None
 
 
 class Transportation(BaseModel):
@@ -224,6 +229,21 @@ class SerpApiResponse(BaseModel):
     phone_link: Optional[str] = None
     property_token: Optional[str] = None
     serpapi_property_details_link: Optional[str] = None
+    gps_coordinates: Optional[GPSCoordinates] = None
+    check_in_time: Optional[str] = None
+    check_out_time: Optional[str] = None
+    hotel_class: Optional[str] = None
+    extracted_hotel_class: Optional[int] = None
+    overall_rating: Optional[float] = None
+    reviews: Optional[int] = None
+    amenities: List[str] = []
+    images: List[ImageInfo] = []
+
+    # Featured prices (when showing single property)
+    featured_prices: List[PriceSource] = []
+
+    # Prices array (when showing single property)
+    prices: List[PriceSource] = []
 
 
 class SerpApiService:
@@ -277,6 +297,11 @@ class SerpApiService:
         if criteria.free_cancellation is not None:
             params["free_cancellation"] = criteria.free_cancellation
 
+        # Only add property_types filter for tracker searches
+        # For specific hotel queries, this forces a search results page instead of hotel details page
+        if criteria.is_tracker_search:
+            params["property_types"] = "12,13,17,18,23"
+
         if criteria.vacation_rentals:
             params["vacation_rentals"] = True
 
@@ -288,6 +313,7 @@ class SerpApiService:
 
         try:
             logger.info(f"Searching hotels with query: {criteria.query}")
+            logger.info(f"SERP API params: {params}")
             response = await self.client.get(self.base_url, params=params)
             response.raise_for_status()
 
@@ -298,6 +324,11 @@ class SerpApiService:
             for prop in data.get("properties", []):
                 prop["search_query"] = criteria.query
                 prop["search_date"] = search_date.isoformat()
+
+            # Log key response fields for debugging
+            logger.info(f"Raw response has type: {data.get('type')}, "
+                       f"featured_prices: {len(data.get('featured_prices', []))}, "
+                       f"properties: {len(data.get('properties', []))}")
 
             return SerpApiResponse(**data)
 

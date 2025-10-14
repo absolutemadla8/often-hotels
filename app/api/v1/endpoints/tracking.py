@@ -4,7 +4,8 @@ from fastapi import APIRouter, HTTPException, Depends, BackgroundTasks
 from pydantic import BaseModel, Field
 
 from app.models.models import Tracker, TrackerResult
-from app.services.tracking_service import HotelTrackingService, get_tracking_service
+from app.services.hotel_tracking_service import HotelTrackingService, get_hotel_tracking_service
+from app.services.tracking_service import SerpApiTrackingService, get_serpapi_tracking_service
 from app.services.serp_service import SearchCriteria, SortBy, Rating, HotelClass
 from app.schemas.response import ResponseBase
 
@@ -21,9 +22,9 @@ class CreateTrackerRequest(BaseModel):
     stay_duration_days: int = Field(1, description="Length of stay in days")
     adults: int = Field(2, description="Number of adults")
     children: int = Field(0, description="Number of children")
-    currency: str = Field("USD", description="Currency code")
-    country_code: str = Field("us", description="Country code")
-    language: str = Field("en", description="Language code")
+    currency: str = Field("INR", description="Currency code")
+    country_code: str = Field("in", description="Country code (gl parameter)")
+    language: str = Field("en", description="Language code (hl parameter)")
     is_scheduled: bool = Field(True, description="Enable scheduled tracking")
 
 
@@ -269,20 +270,20 @@ async def delete_tracker(tracker_id: int):
 async def run_trackers(
     request: RunTrackerRequest,
     background_tasks: BackgroundTasks,
-    tracking_service: HotelTrackingService = Depends(get_tracking_service)
+    tracking_service: SerpApiTrackingService = Depends(get_serpapi_tracking_service)
 ):
     """Run specific trackers manually"""
     try:
-        # Validate tracker IDs
-        trackers = []
+        # Validate tracker IDs and run trackers
+        results = []
         for tracker_id in request.tracker_ids:
             tracker = await Tracker.get_or_none(id=tracker_id)
             if not tracker:
                 raise HTTPException(status_code=404, detail=f"Tracker {tracker_id} not found")
-            trackers.append(tracker)
 
-        # Run trackers
-        results = await tracking_service.run_multiple_trackers(request.tracker_ids)
+            # Run tracker synchronously
+            result = await tracking_service.run_tracker_sync(tracker)
+            results.append(result)
 
         response_data = [
             TrackerResultResponse(
@@ -313,7 +314,7 @@ async def run_trackers(
 @router.post("/run-scheduled", response_model=ResponseBase[List[TrackerResultResponse]])
 async def run_scheduled_trackers(
     background_tasks: BackgroundTasks,
-    tracking_service: HotelTrackingService = Depends(get_tracking_service)
+    tracking_service: HotelTrackingService = Depends(get_hotel_tracking_service)
 ):
     """Run all scheduled trackers that are due"""
     try:
@@ -386,7 +387,7 @@ async def get_tracker_results(
 @router.post("/test-search", response_model=ResponseBase[Dict[str, Any]])
 async def test_search(
     request: TestSearchRequest,
-    tracking_service: HotelTrackingService = Depends(get_tracking_service)
+    tracking_service: HotelTrackingService = Depends(get_hotel_tracking_service)
 ):
     """Test a search query without creating a tracker"""
     try:

@@ -125,9 +125,56 @@ class Settings(BaseSettings):
     ADMIN_EMAIL: str = "admin@oftenhotels.com"
     ADMIN_PASSWORD: str = "admin123"
 
-    # SerpApi Configuration
+    # SerpApi Configuration (Legacy - being replaced by BrightData)
     SERP_API_KEY: Optional[str] = None
     SERP_API_BASE_URL: str = "https://serpapi.com/search.json"
+
+    # BrightData Configuration
+    BRIGHTDATA_API_KEY: Optional[str] = None
+    BRIGHTDATA_ZONE: str = "residential"  # residential, datacenter, mobile
+    BRIGHTDATA_MAX_CONCURRENT: int = 10
+    BRIGHTDATA_TIMEOUT: int = 180  # seconds
+    BRIGHTDATA_WEBHOOK_URL: Optional[str] = None
+
+    # Celery Configuration
+    CELERY_BROKER_URL: str = "redis://localhost:6379/0"
+    CELERY_RESULT_BACKEND: str = "redis://localhost:6379/1"
+    CELERY_TASK_SERIALIZER: str = "json"
+    CELERY_RESULT_SERIALIZER: str = "json"
+    CELERY_ACCEPT_CONTENT: List[str] = ["json"]
+    CELERY_TIMEZONE: str = "UTC"
+    CELERY_ENABLE_UTC: bool = True
+
+    # Scraping Configuration
+    SCRAPE_RATE_LIMIT: int = 100  # requests per minute
+    SCRAPE_BURST: int = 20
+    SCRAPE_MAX_RETRIES: int = 3
+    SCRAPE_RETRY_BACKOFF_BASE: int = 2
+    SCRAPE_DELAY_BETWEEN_REQUESTS: int = 5  # seconds
+
+    # Hotel Matching Configuration
+    HOTEL_NAME_SIMILARITY_THRESHOLD: int = 85  # 0-100
+    HOTEL_COORDINATE_DISTANCE_KM: float = 0.1  # kilometers
+    HOTEL_MATCHING_USE_CACHE: bool = True
+
+    # Data Validation Configuration
+    MIN_PRICE_THRESHOLD: float = 10.0
+    MAX_PRICE_THRESHOLD: float = 10000.0
+    PRICE_CHANGE_THRESHOLD: float = 0.5  # 50% change triggers anomaly
+
+    # Cost Management
+    DAILY_BUDGET_USD: float = 100.0
+    ALERT_THRESHOLD_USD: float = 80.0
+
+    # Monitoring & Alerting
+    SENTRY_DSN: Optional[str] = None
+    PROMETHEUS_ENABLED: bool = True
+    PROMETHEUS_PORT: int = 9090
+
+    # TimescaleDB Configuration
+    TIMESCALEDB_ENABLED: bool = True  # Enable TimescaleDB optimizations
+    PRICE_HISTORY_RETENTION_DAYS: int = 730  # 2 years
+    PRICE_HISTORY_COMPRESSION_DAYS: int = 7  # Compress data older than 7 days
 
     # Upstash Redis Configuration
     UPSTASH_REDIS_REST_URL: Optional[str] = None

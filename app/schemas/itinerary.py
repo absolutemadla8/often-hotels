@@ -66,8 +66,14 @@ class ItineraryOptimizationRequest(BaseModel):
     )
     suggest_best_order: bool = Field(True, description="Allow system to reorder destinations")
     
-    # Date constraints
-    global_date_range: DateRange = Field(..., description="Overall date range for the trip")
+    # Date constraints - THREE MODES:
+    # Mode 1: global_date_range only (finds 3 cheapest start dates in range)
+    # Mode 2: single_start_date only (finds 2 more cheapest dates within ±30 days)
+    # Mode 3: trip_start_dates (use exactly these 3 dates)
+    global_date_range: Optional[DateRange] = Field(None, description="Overall date range for the trip (Mode 1)")
+    single_start_date: Optional[date] = Field(None, description="Single start date - system finds 2 more within ±30 days (Mode 2)")
+    trip_start_dates: Optional[List[date]] = Field(None, min_length=1, max_length=3, description="Exact trip start dates to evaluate (Mode 3)")
+
     ranges: Optional[List[DateRange]] = Field(None, description="Date ranges for ranges search")
     fixed_dates: Optional[List[date]] = Field(None, description="Fixed dates for exact search")
     
@@ -115,7 +121,28 @@ class ItineraryOptimizationRequest(BaseModel):
             if not v:
                 raise ValueError("Fixed dates must be provided for fixed_dates search")
         return v
-    
+
+    @field_validator('single_start_date')
+    @classmethod
+    def validate_date_modes(cls, v, info):
+        """Validate that only one date mode is specified"""
+        # Check after all fields are populated
+        # This runs when single_start_date is processed
+        if 'global_date_range' in info.data or 'trip_start_dates' in info.data:
+            global_range = info.data.get('global_date_range')
+            trip_starts = info.data.get('trip_start_dates')
+
+            modes_specified = sum([
+                global_range is not None,
+                v is not None,
+                trip_starts is not None and len(trip_starts) > 0 if trip_starts else False
+            ])
+
+            if modes_specified > 1:
+                raise ValueError("Cannot specify multiple date modes. Choose one: global_date_range, single_start_date, or trip_start_dates")
+
+        return v
+
     model_config = ConfigDict(from_attributes=True)
 
 
@@ -241,6 +268,12 @@ class PaginatedHotelSearchResponse(BaseModel):
 
 
 # Response Schemas
+class MetaPrice(BaseModel):
+    """Price from a specific booking source"""
+    source: str = Field(..., description="Booking website name")
+    price: float = Field(..., description="Price on this website")
+
+
 class HotelAssignmentResponse(BaseModel):
     """Hotel assignment for a specific date"""
     hotel_id: int = Field(..., description="Hotel ID")
@@ -250,7 +283,8 @@ class HotelAssignmentResponse(BaseModel):
     currency: str = Field(..., description="Price currency")
     room_type: Optional[str] = Field(None, description="Room type")
     selection_reason: Optional[str] = Field(None, description="Why this hotel was selected")
-    
+    meta_prices: List[MetaPrice] = Field(default_factory=list, description="Prices across different booking websites")
+
     model_config = ConfigDict(from_attributes=True)
 
 
@@ -374,13 +408,66 @@ class ItineraryOptimizationResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
 
+# New Tier-Based Response Structure (aligned with recommendations API)
+class HotelInTimeSegment(BaseModel):
+    """Hotel for a specific time segment in tier-based response"""
+    name: str
+    hotelId: int
+    image: Optional[str] = None
+    price: float
+    currency: str
+    status: str = Field(..., description="Availability status (Available/Limited/Peak Season)")
+    nights: int
+    checkIn: str  # ISO date string
+    checkOut: str  # ISO date string
+    meta_prices: List[MetaPrice] = Field(default_factory=list)
+
+
+class TimeSegmentWithHotels(BaseModel):
+    """Time segment containing 1-5 hotels"""
+    label: str = Field(..., description="Time segment label (e.g., '2025-10-05 to 2025-10-09')")
+    hotels: List[HotelInTimeSegment] = Field(..., description="1-5 hotels for this time segment", min_length=1, max_length=5)
+
+
+class StarRatingGroup(BaseModel):
+    """Group of hotels by star rating for an area"""
+    star_rating: int = Field(..., description="Star rating (4 or 5)")
+    time_segments: List[TimeSegmentWithHotels] = Field(..., description="Array of time segments, each with 3-5 hotels")
+
+
+class TierArea(BaseModel):
+    """Area in tier-based response with hotels grouped by star rating"""
+    name: str
+    areaId: int
+    star_ratings: List[StarRatingGroup] = Field(..., description="Hotels grouped by star rating (4 and 5 stars)")
+
+
+class TierDestination(BaseModel):
+    """Destination in tier-based response containing areas"""
+    name: str
+    destinationId: int
+    areas: List[TierArea] = Field(..., description="Areas within this destination")
+
+
+class ItineraryTier(BaseModel):
+    """Single tier (e.g., December 2024) with time segments"""
+    id: str = Field(..., description="Tier ID (e.g., 'december-2024')")
+    title: str = Field(..., description="Tier title (e.g., 'December 2024 (5 nights)')")
+    destinations: List[TierDestination]
+
+
+class TierBasedItineraryResponse(BaseModel):
+    """New tier-based itinerary response (aligned with recommendations API)"""
+    tiers: List[ItineraryTier]
+
+
 # Error response schemas
 class ItineraryError(BaseModel):
     """Error in itinerary optimization"""
     type: str = Field(..., description="Error type")
     message: str = Field(..., description="Error message")
     details: Optional[Dict[str, Any]] = Field(None, description="Additional error details")
-    
+
     model_config = ConfigDict(from_attributes=True)
 
 
@@ -398,10 +485,11 @@ class HotelPriceData(BaseModel):
     """Hotel price data for optimization algorithms"""
     hotel_id: int = Field(..., description="Hotel ID")
     hotel_name: str = Field(..., description="Hotel name")
-    prices: Dict[str, Decimal] = Field(..., description="Date -> Price mapping")
+    prices: Dict[str, Decimal] = Field(..., description="Date -> Price mapping (min prices)")
     currency: str = Field(..., description="Price currency")
     availability_dates: List[date] = Field(..., description="Available dates")
-    
+    meta_prices: Optional[Dict[str, Dict[str, Any]]] = Field(None, description="Date -> {min_price, sources: [{source, price}]}")
+
     model_config = ConfigDict(from_attributes=True)
 
 

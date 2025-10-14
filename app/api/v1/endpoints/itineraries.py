@@ -13,7 +13,8 @@ import logging
 from app.api.tortoise_deps import get_optional_current_user, get_current_active_user
 from app.models.models import User
 from app.services.itinerary_optimization_service import (
-    get_itinerary_optimization_service, ItineraryOptimizationService
+    get_itinerary_optimization_service, ItineraryOptimizationService,
+    convert_to_tier_based_response
 )
 from app.schemas.itinerary import (
     ItineraryOptimizationRequest, ItineraryOptimizationResponse,
@@ -125,15 +126,15 @@ async def optimize_itinerary(
         
         # Execute optimization
         result = await optimization_service.optimize_itinerary(request, current_user)
-        
+
         # Schedule background tasks for analytics/logging
         background_tasks.add_task(
-            _log_optimization_request, 
-            user_id, 
-            request, 
+            _log_optimization_request,
+            user_id,
+            request,
             result.success
         )
-        
+
         if result.success:
             logger.info(
                 f"Optimization successful for user {user_id}: "
@@ -142,13 +143,23 @@ async def optimize_itinerary(
             )
         else:
             logger.warning(f"Optimization failed for user {user_id}")
-        
-        # Apply user access filtering
-        return create_filtered_response(
-            data=result.model_dump(),
-            user=current_user,
-            endpoint_path="/itineraries/optimize"
-        )
+
+        # Convert to new tier-based format (only if successful)
+        if result.success:
+            tier_based_response = await convert_to_tier_based_response(result, request)
+
+            # Apply user access filtering
+            return create_filtered_response(
+                data=tier_based_response["data"],
+                user=current_user,
+                endpoint_path="/itineraries/optimize"
+            )
+        else:
+            # Return error response as-is
+            return JSONResponse(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                content=result.model_dump()
+            )
         
     except HTTPException:
         raise
@@ -163,7 +174,7 @@ async def optimize_itinerary(
 @router.get("/cached/{request_hash}")
 async def get_cached_optimization(
     request_hash: str,
-    # current_user: User = Depends(get_current_active_user),  # Temporarily disabled for testing
+    current_user: User = Depends(get_current_active_user),
     optimization_service: ItineraryOptimizationService = Depends(get_itinerary_optimization_service)
 ) -> Dict[str, Any]:
     """

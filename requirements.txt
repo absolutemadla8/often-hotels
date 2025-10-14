@@ -50,3 +50,16 @@ aiofiles
 # Admin Panel
 fastapi-admin
 tortoise-orm[asyncpg]
+
+# Scraping and Matching
+tenacity  # Retry logic with exponential backoff
+rapidfuzz  # Fuzzy string matching for hotel deduplication
+
+# Monitoring
+sentry-sdk[fastapi]  # Error tracking
+prometheus-fastapi-instrumentator  # FastAPI metrics
+
+# TimescaleDB (PostgreSQL extension - no Python package needed)
+psycopg2-binary  # PostgreSQL adapter for raw SQL
+
+# SerpAPI (note: httpx is already included above for general HTTP client usage)
