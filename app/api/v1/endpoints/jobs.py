@@ -237,11 +237,11 @@ async def get_tracker_statistics(
         if status:
             query = query.filter(status=status)
 
-        trackers = await query.limit(limit).prefetch_related("results")
+        trackers = await query.limit(limit).prefetch_related("tracker_results")
 
         stats = []
         for tracker in trackers:
-            results = await TrackerResult.filter(tracker=tracker).all()
+            results = tracker.tracker_results
 
             total_runs = len(results)
             successful_runs = sum(1 for r in results if r.success)
