@@ -448,65 +448,71 @@ def scrape_multiple_trackers_task(self, tracker_ids: List[int]) -> Dict[str, Any
 
 async def _scrape_multiple_trackers_async(task, tracker_ids: List[int]) -> Dict[str, Any]:
     """Async implementation of batch scraping"""
+    from tortoise import Tortoise
 
-    await init_db()
+    try:
+        await init_db()
 
-    total = len(tracker_ids)
-    completed = 0
-    failed = 0
-    task_ids = []
+        total = len(tracker_ids)
+        completed = 0
+        failed = 0
+        task_ids = []
 
-    # Process trackers sequentially to avoid rate limiting
-    for i, tracker_id in enumerate(tracker_ids):
-        try:
-            # Update progress
-            task.update_state(
-                state='PROGRESS',
-                meta={
-                    'current': i + 1,
-                    'total': total,
-                    'status': f'Processing tracker {tracker_id}...'
-                }
-            )
+        # Process trackers sequentially to avoid rate limiting
+        for i, tracker_id in enumerate(tracker_ids):
+            try:
+                # Update progress
+                task.update_state(
+                    state='PROGRESS',
+                    meta={
+                        'current': i + 1,
+                        'total': total,
+                        'status': f'Processing tracker {tracker_id}...'
+                    }
+                )
 
-            # Fetch tracker to get search criteria
-            tracker = await Tracker.get_or_none(id=tracker_id)
-            if not tracker:
-                logger.warning(f"Tracker {tracker_id} not found")
+                # Fetch tracker to get search criteria
+                tracker = await Tracker.get_or_none(id=tracker_id)
+                if not tracker:
+                    logger.warning(f"Tracker {tracker_id} not found")
+                    failed += 1
+                    continue
+
+                # Extract search parameters
+                params = tracker.search_criteria or {}
+
+                # Submit scraping task (only pass what's not in args)
+                additional_params = {k: v for k, v in params.items() if k not in ['start_date', 'end_date', 'query']}
+                task_result = scrape_hotel_prices_task.apply_async(
+                    args=[
+                        tracker_id,
+                        params.get("start_date", date.today().isoformat()),
+                        params.get("end_date", (date.today()).isoformat()),
+                        params.get("query", tracker.name)
+                    ],
+                    kwargs=additional_params
+                )
+
+                task_ids.append(task_result.id)
+                completed += 1
+
+                # Delay between submissions to avoid overwhelming the queue
+                await asyncio.sleep(2)
+
+            except Exception as e:
+                logger.error(f"Failed to submit tracker {tracker_id}: {e}")
                 failed += 1
-                continue
 
-            # Extract search parameters
-            params = tracker.search_criteria or {}
-
-            # Submit scraping task
-            task_result = scrape_hotel_prices_task.apply_async(
-                args=[
-                    tracker_id,
-                    params.get("start_date", date.today().isoformat()),
-                    params.get("end_date", (date.today()).isoformat()),
-                    params.get("query", tracker.name)
-                ],
-                kwargs=params
-            )
-
-            task_ids.append(task_result.id)
-            completed += 1
-
-            # Delay between submissions to avoid overwhelming the queue
-            await asyncio.sleep(2)
-
-        except Exception as e:
-            logger.error(f"Failed to submit tracker {tracker_id}: {e}")
-            failed += 1
-
-    return {
-        "status": "success",
-        "total_trackers": total,
-        "submitted": completed,
-        "failed": failed,
-        "task_ids": task_ids
-    }
+        return {
+            "status": "success",
+            "total_trackers": total,
+            "submitted": completed,
+            "failed": failed,
+            "task_ids": task_ids
+        }
+    finally:
+        # Properly close database connections
+        await Tortoise.close_connections()
 
 
 @celery_app.task(
