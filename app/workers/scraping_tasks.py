@@ -16,6 +16,34 @@ from app.services.hotel_matching_service import get_hotel_matching_service
 logger = logging.getLogger(__name__)
 
 
+def run_async_task(coro):
+    """
+    Run async coroutine in a new event loop (Celery-safe)
+
+    This is necessary because asyncio.run() closes the event loop after execution,
+    which causes issues in Celery workers that reuse the same process for multiple tasks.
+    """
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
+    try:
+        return loop.run_until_complete(coro)
+    finally:
+        try:
+            # Shutdown async generators
+            loop.run_until_complete(loop.shutdown_asyncgens())
+            # Shutdown default executor
+            loop.run_until_complete(loop.shutdown_default_executor())
+        except Exception:
+            pass
+        finally:
+            try:
+                loop.close()
+            except Exception:
+                pass
+            # Clear the event loop to avoid conflicts
+            asyncio.set_event_loop(None)
+
+
 async def init_db():
     """Initialize Tortoise ORM for Celery tasks"""
     from tortoise import Tortoise
@@ -90,8 +118,8 @@ def scrape_hotel_prices_task(
     )
 
     try:
-        # Run async function in sync context
-        result = asyncio.run(_scrape_hotel_prices_async(
+        # Run async function in sync context (Celery-safe)
+        result = run_async_task(_scrape_hotel_prices_async(
             self,
             tracker_id,
             check_in,
@@ -109,7 +137,7 @@ def scrape_hotel_prices_task(
     except MaxRetriesExceededError:
         logger.critical(f"Task {self.request.id} exceeded max retries for tracker {tracker_id}")
         # Mark tracker as failed
-        asyncio.run(_mark_tracker_failed(tracker_id, "Max retries exceeded"))
+        run_async_task(_mark_tracker_failed(tracker_id, "Max retries exceeded"))
         raise
 
     except Exception as exc:
@@ -126,13 +154,14 @@ async def _scrape_hotel_prices_async(
     **kwargs
 ) -> Dict[str, Any]:
     """Async implementation of scraping task"""
-
-    # Initialize database
-    await init_db()
-
-    start_time = datetime.utcnow()
+    from tortoise import Tortoise
 
     try:
+        # Initialize database
+        await init_db()
+
+        start_time = datetime.utcnow()
+
         # Fetch tracker
         tracker = await Tracker.get_or_none(id=tracker_id)
         if not tracker:
@@ -251,6 +280,9 @@ async def _scrape_hotel_prices_async(
             await tracker.save()
 
         raise
+    finally:
+        # Properly close database connections
+        await Tortoise.close_connections()
 
 
 async def _process_and_save_results(
@@ -439,7 +471,7 @@ def scrape_multiple_trackers_task(self, tracker_ids: List[int]) -> Dict[str, Any
     """
 
     try:
-        result = asyncio.run(_scrape_multiple_trackers_async(self, tracker_ids))
+        result = run_async_task(_scrape_multiple_trackers_async(self, tracker_ids))
         return result
     except Exception as e:
         logger.error(f"Batch scraping failed: {e}")
