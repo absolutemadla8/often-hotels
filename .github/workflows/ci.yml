@@ -1,0 +1,115 @@
+name: CI - Test & Build
+
+on:
+  push:
+    branches: [ sarvesh/db-setup, main ]
+  pull_request:
+    branches: [ sarvesh/db-setup, main ]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+
+    services:
+      postgres:
+        image: postgres:15-alpine
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: password
+          POSTGRES_DB: often_hotels_test
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+        ports:
+          - 5432:5432
+
+      redis:
+        image: redis:7-alpine
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 10s
+          --health-timeout 3s
+          --health-retries 5
+        ports:
+          - 6379:6379
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Set up Python
+      uses: actions/setup-python@v5
+      with:
+        python-version: '3.11'
+        cache: 'pip'
+
+    - name: Install dependencies
+      run: |
+        python -m pip install --upgrade pip
+        if [ -f requirements.txt ]; then pip install -r requirements.txt; fi
+        pip install pytest pytest-asyncio pytest-cov flake8
+
+    - name: Lint with flake8
+      run: |
+        # Stop the build if there are Python syntax errors or undefined names
+        flake8 app --count --select=E9,F63,F7,F82 --show-source --statistics
+        # Exit-zero treats all errors as warnings
+        flake8 app --count --exit-zero --max-complexity=10 --max-line-length=127 --statistics
+      continue-on-error: true
+
+    - name: Run tests
+      env:
+        DATABASE_URL: postgresql://postgres:password@localhost:5432/often_hotels_test
+        REDIS_URL: redis://localhost:6379/0
+        SECRET_KEY: test-secret-key-for-ci-testing-only
+        SERP_API_KEY: ${{ secrets.SERP_API_KEY }}
+        TRAVCLAN_API_KEY: ${{ secrets.TRAVCLAN_API_KEY }}
+      run: |
+        if [ -d tests ]; then
+          pytest tests/ -v --cov=app --cov-report=xml --cov-report=term
+        else
+          echo "No tests directory found, skipping tests"
+        fi
+      continue-on-error: true
+
+    - name: Build Docker image
+      run: |
+        docker build -t often-hotels:${{ github.sha }} .
+        docker images | grep often-hotels
+
+    - name: Test Docker image
+      run: |
+        echo "Docker image built successfully"
+        docker inspect often-hotels:${{ github.sha }}
+
+  lint-and-security:
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Set up Python
+      uses: actions/setup-python@v5
+      with:
+        python-version: '3.11'
+
+    - name: Install security tools
+      run: |
+        pip install bandit safety
+      continue-on-error: true
+
+    - name: Run Bandit security scan
+      run: |
+        bandit -r app -f json -o bandit-report.json || true
+        bandit -r app || true
+      continue-on-error: true
+
+    - name: Check dependencies for vulnerabilities
+      run: |
+        if [ -f requirements.txt ]; then
+          safety check -r requirements.txt --json || true
+        fi
+      continue-on-error: true

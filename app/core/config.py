@@ -58,7 +58,7 @@ class Settings(BaseSettings):
         return self
 
     # Redis for caching and rate limiting
-    REDIS_URL: str = "redis://localhost:6379/0"
+    REDIS_URL: str = "redis://redis:6379/0"
     
     # Security
     ALGORITHM: str = "HS256"
@@ -137,8 +137,8 @@ class Settings(BaseSettings):
     BRIGHTDATA_WEBHOOK_URL: Optional[str] = None
 
     # Celery Configuration
-    CELERY_BROKER_URL: str = "redis://localhost:6379/0"
-    CELERY_RESULT_BACKEND: str = "redis://localhost:6379/1"
+    CELERY_BROKER_URL: str = "redis://redis:6379/0"
+    CELERY_RESULT_BACKEND: str = "redis://redis:6379/1"
     CELERY_TASK_SERIALIZER: str = "json"
     CELERY_RESULT_SERIALIZER: str = "json"
     CELERY_ACCEPT_CONTENT: List[str] = ["json"]

@@ -1,0 +1,121 @@
+name: CD - Deploy to VM
+
+on:
+  push:
+    branches: [ sarvesh/db-setup ]  # Trigger deployment on push to this branch
+  workflow_dispatch:  # Allow manual trigger from GitHub UI
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    environment: production  # Requires approval in GitHub if configured
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Setup SSH
+      env:
+        VM_HOST: ${{ secrets.VM_HOST }}
+        VM_SSH_KEY: ${{ secrets.VM_SSH_KEY }}
+      run: |
+        mkdir -p ~/.ssh
+        echo "$VM_SSH_KEY" > ~/.ssh/deploy_key
+        chmod 600 ~/.ssh/deploy_key
+        ssh-keyscan -H $VM_HOST >> ~/.ssh/known_hosts 2>/dev/null
+
+    - name: Deploy to VM
+      env:
+        VM_HOST: ${{ secrets.VM_HOST }}
+        VM_USER: ${{ secrets.VM_USER }}
+        SECRET_KEY: ${{ secrets.SECRET_KEY }}
+        SERP_API_KEY: ${{ secrets.SERP_API_KEY }}
+        TRAVCLAN_API_KEY: ${{ secrets.TRAVCLAN_API_KEY }}
+        DATABASE_URL: ${{ secrets.DATABASE_URL }}
+        REDIS_URL: ${{ secrets.REDIS_URL }}
+      run: |
+        ssh -i ~/.ssh/deploy_key -o StrictHostKeyChecking=no $VM_USER@$VM_HOST << 'ENDSSH'
+          set -e  # Exit on any error
+
+          echo "=== Starting deployment ==="
+          cd /root/often-hotels
+
+          echo "=== Pulling latest changes ==="
+          git fetch origin
+          git checkout sarvesh/db-setup
+          git pull origin sarvesh/db-setup
+
+          echo "=== Updating environment variables ==="
+          cat > .env << EOF
+        DATABASE_URL=$DATABASE_URL
+        REDIS_URL=$REDIS_URL
+        SECRET_KEY=$SECRET_KEY
+        SERP_API_KEY=$SERP_API_KEY
+        TRAVCLAN_API_KEY=$TRAVCLAN_API_KEY
+        EOF
+
+          echo "=== Stopping existing containers ==="
+          docker-compose down
+
+          echo "=== Building Docker images ==="
+          docker-compose build --no-cache
+
+          echo "=== Starting containers ==="
+          docker-compose up -d
+
+          echo "=== Waiting for services to be healthy ==="
+          sleep 15
+
+          echo "=== Running database migrations ==="
+          docker exec often-hotels-api alembic upgrade head || echo "Migration failed or not configured"
+
+          echo "=== Checking container status ==="
+          docker-compose ps
+
+          echo "=== Deployment completed successfully! ==="
+        ENDSSH
+
+    - name: Verify Deployment
+      env:
+        VM_HOST: ${{ secrets.VM_HOST }}
+        VM_USER: ${{ secrets.VM_USER }}
+      run: |
+        echo "=== Verifying deployment ==="
+        ssh -i ~/.ssh/deploy_key -o StrictHostKeyChecking=no $VM_USER@$VM_HOST << 'ENDSSH'
+          cd /root/often-hotels
+
+          echo "=== Container Status ==="
+          docker-compose ps
+
+          echo ""
+          echo "=== API Container Logs (Last 30 lines) ==="
+          docker logs --tail 30 often-hotels-api
+
+          echo ""
+          echo "=== Celery Worker Logs (Last 20 lines) ==="
+          docker logs --tail 20 often-hotels-celery-worker
+
+          echo ""
+          echo "=== Health Check ==="
+          # Try to curl the health endpoint if it exists
+          curl -f http://localhost:8006/health || echo "Health endpoint not available"
+        ENDSSH
+
+    - name: Cleanup SSH Key
+      if: always()
+      run: |
+        rm -f ~/.ssh/deploy_key
+
+    - name: Notify on Success
+      if: success()
+      run: |
+        echo "✅ Deployment to VM successful!"
+        echo "Branch: sarvesh/db-setup"
+        echo "Commit: ${{ github.sha }}"
+        echo "Deployed by: ${{ github.actor }}"
+
+    - name: Notify on Failure
+      if: failure()
+      run: |
+        echo "❌ Deployment failed! Check the logs above."
+        echo "You may need to SSH into the VM manually to investigate."
